@@ -1,10 +1,11 @@
-import { EventHandler } from './event-handler.type';
 import { EventPayload } from '../schemas/event.schema';
 
 export type BusResult = {
   statusCode: number;
   body: unknown;
 };
+
+export type EventHandler = (event: EventPayload) => BusResult | Promise<BusResult>;
 
 export class EventBus {
   private handlers: EventHandler[] = [];
@@ -13,7 +14,20 @@ export class EventBus {
     this.handlers.push(handler);
   }
 
-  publish(event: EventPayload): BusResult[] {
-    return this.handlers.map((handler) => handler(event) as BusResult);
+  async publish(event: EventPayload): Promise<BusResult[]> {
+    const settledResults = this.handlers.map((handler) => {
+      return Promise.resolve()
+        .then(() => handler(event))
+        .then((result) => result)
+        .catch(() => ({
+          statusCode: 500,
+          body: {
+            success: false,
+            error: 'Subscriber failed'
+          }
+        }));
+    });
+
+    return Promise.all(settledResults);
   }
 }
