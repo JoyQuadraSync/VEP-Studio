@@ -1,10 +1,10 @@
 import { EventBus } from '../event-bus/event-bus';
-import { EventPayload } from '../schemas/event.schema';
+import { BaseEvent, EventMap } from '../types/event';
 import { runCommentWorker } from '../workers/comment.worker';
 
-export function registerEventRouter(eventBus: EventBus): void {
-  eventBus.subscribe((event: EventPayload) => {
-    if (event.event_type !== 'customer.comment.created') {
+export function registerEventRouter(eventBus: EventBus<'customer.comment.created'>): void {
+  eventBus.subscribe((event: BaseEvent<EventMap['customer.comment.created']>) => {
+    if (event.eventType !== 'customer.comment.created') {
       return {
         statusCode: 422,
         body: {
@@ -14,7 +14,7 @@ export function registerEventRouter(eventBus: EventBus): void {
       };
     }
 
-    const result = runCommentWorker({ event_id: event.event_id });
+    const result = runCommentWorker({ event_id: event.eventId });
 
     return {
       statusCode: 200,

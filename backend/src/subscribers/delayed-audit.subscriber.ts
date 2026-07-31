@@ -1,9 +1,10 @@
-import { EventPayload } from '../schemas/event.schema';
+import { BaseEvent, EventMap } from '../types/event';
+import { EventHandler } from '../event-bus/event-handler.type';
 
 export function registerDelayedAuditSubscriber(eventBus: {
-  subscribe(handler: (event: EventPayload) => Promise<unknown> | unknown): void;
+  subscribe(handler: EventHandler<'customer.comment.created'>): void;
 }): void {
-  eventBus.subscribe(async (event: EventPayload) => {
+  eventBus.subscribe(async (event: BaseEvent<EventMap['customer.comment.created']>) => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     console.log('Delayed audit event received');
 
@@ -12,7 +13,7 @@ export function registerDelayedAuditSubscriber(eventBus: {
       body: {
         success: true,
         subscriber: 'delayed-audit-subscriber',
-        event_id: event.event_id
+        event_id: event.eventId
       }
     };
   });

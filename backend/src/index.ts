@@ -4,10 +4,11 @@ import { registerEventRouter } from './router/event.router';
 import { eventSchema } from './schemas/event.schema';
 import { registerAuditSubscriber } from './subscribers/audit.subscriber';
 import { registerDelayedAuditSubscriber } from './subscribers/delayed-audit.subscriber';
+import { createCustomerCommentCreatedEvent } from './events/event-factory';
 
 const app = express();
 const port = process.env.PORT || 3000;
-const eventBus = new EventBus();
+const eventBus = new EventBus<'customer.comment.created'>();
 
 registerEventRouter(eventBus);
 registerAuditSubscriber(eventBus);
@@ -33,7 +34,18 @@ app.post('/events', async (req, res) => {
     });
   }
 
-  const results = await eventBus.publish(parseResult.data);
+  const baseEvent = createCustomerCommentCreatedEvent({
+    eventId: parseResult.data.event_id,
+    eventType: parseResult.data.event_type,
+    correlationId: parseResult.data.correlation_id,
+    causationId: parseResult.data.causation_id,
+    payload: {
+      customerId: '',
+      comment: ''
+    }
+  });
+
+  const results = await eventBus.publish(baseEvent);
   const routerResult = results[0];
 
   if (!routerResult) {

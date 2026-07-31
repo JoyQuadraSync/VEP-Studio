@@ -1,9 +1,10 @@
-import { EventPayload } from '../schemas/event.schema';
+import { BaseEvent, EventMap } from '../types/event';
+import { EventHandler } from '../event-bus/event-handler.type';
 
 export function registerAuditSubscriber(eventBus: {
-  subscribe(handler: (event: EventPayload) => unknown): void;
+  subscribe(handler: EventHandler<'customer.comment.created'>): void;
 }): void {
-  eventBus.subscribe((event: EventPayload) => {
+  eventBus.subscribe((event: BaseEvent<EventMap['customer.comment.created']>) => {
     console.log('Audit event received');
 
     return {
@@ -11,7 +12,7 @@ export function registerAuditSubscriber(eventBus: {
       body: {
         success: true,
         subscriber: 'audit-subscriber',
-        event_id: event.event_id
+        event_id: event.eventId
       }
     };
   });

@@ -1,4 +1,6 @@
-import { EventPayload } from '../schemas/event.schema';
+import { BaseEvent, EventMap } from '../types/event';
 import { BusResult } from './event-bus';
 
-export type EventHandler = (event: EventPayload) => BusResult | Promise<BusResult>;
+export type EventHandler<TEventType extends keyof EventMap = keyof EventMap> = (
+  event: BaseEvent<EventMap[TEventType]>
+) => BusResult | Promise<BusResult>;

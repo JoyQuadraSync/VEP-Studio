@@ -1,20 +1,19 @@
-import { EventPayload } from '../schemas/event.schema';
+import { BaseEvent, EventMap } from '../types/event';
+import { EventHandler } from './event-handler.type';
 
 export type BusResult = {
   statusCode: number;
   body: unknown;
 };
 
-export type EventHandler = (event: EventPayload) => BusResult | Promise<BusResult>;
+export class EventBus<TEventType extends keyof EventMap = keyof EventMap> {
+  private handlers: Array<EventHandler<TEventType>> = [];
 
-export class EventBus {
-  private handlers: EventHandler[] = [];
-
-  subscribe(handler: EventHandler): void {
+  subscribe(handler: EventHandler<TEventType>): void {
     this.handlers.push(handler);
   }
 
-  async publish(event: EventPayload): Promise<BusResult[]> {
+  async publish(event: BaseEvent<EventMap[TEventType]>): Promise<BusResult[]> {
     const settledResults = this.handlers.map((handler) => {
       return Promise.resolve()
         .then(() => handler(event))
