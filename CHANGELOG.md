@@ -2,6 +2,43 @@
 
 All notable changes to VEP Studio will be documented in this file.
 
+## Sprint 008 — 2026-08-03
+
+### Added
+
+- `WorkflowExecution` as the single workflow execution-state aggregate
+- `WorkflowRunner` and in-memory linear runtime implementation
+- `WorkflowState`, `WorkflowFailure`, and `WorkflowStepResult` contracts
+- `OperationRegistry`, `OperationHandler`, and duplicate operation protection
+- immutable execution snapshots and deterministic execution ID generation
+- duration-based step and aggregate runtime metadata
+- structured workflow failures without raw runtime causes
+
+### Architecture
+
+- Workflow Runtime remains separate from Workflow Definition
+- `WorkflowExecution` replaces the overlapping `WorkflowInstance` concept
+- WorkflowRunner owns step progression directly
+- EventBus remains outside workflow control flow
+- `ExecutionContext` remains event-publication-specific
+- existing `Clock` is reused only for duration calculation
+
+### Verification
+
+- Typecheck and build passed
+- Full test suite passed, 22/22
+- EventBus tests passed, 4/4
+- Workflow Definition tests passed, 6/6
+- Workflow Runtime tests passed, 12/12
+
+### Deferred
+
+- conditions, decisions, and parallel execution
+- retry, timeout, and cancellation
+- persistence, recovery, and scheduling
+- human tasks and AI agents
+- metrics aggregation, tracing, HTTP endpoints, and visual editor
+
 ## Sprint 007 — 2026-08-03
 
 ### Added
