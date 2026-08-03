@@ -2,6 +2,40 @@
 
 All notable changes to VEP Studio will be documented in this file.
 
+## Sprint 007 — 2026-08-03
+
+### Added
+
+- `WorkflowDefinition`, `WorkflowStep`, and `WorkflowEdge` graph contracts
+- independent `WorkflowValidator` for definition and graph integrity
+- versioned `WorkflowRegistry` for registration and lookup
+- `CustomerCommentWorkflow` example
+- declarative operation identifiers
+- dotted workflow IDs and immutable integer version keys
+
+### Architecture
+
+- Workflow Definition is separated from Workflow Runtime
+- WorkflowValidator is separated from WorkflowRegistry
+- workflow operations are identifiers rather than executable callbacks
+- workflow definitions remain independent from HTTP and EventBus infrastructure
+
+### Verification
+
+- Typecheck and build passed
+- Full test suite passed, 10/10
+- EventBus tests passed, 4/4
+- Workflow tests passed, 6/6
+
+### Deferred
+
+- WorkflowRuntime and OperationRegistry
+- execution state
+- retries and timeout
+- persistence and scheduling
+- AI agents
+- HTTP endpoints
+
 ## Sprint 006 — 2026-08-03
 
 ### Added

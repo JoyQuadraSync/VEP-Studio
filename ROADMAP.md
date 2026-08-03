@@ -49,14 +49,14 @@ VEP Studio is an event-driven platform for connecting business events, AI agents
 ### Completed Sprints
 
 - Sprint 006 — Runtime Foundation Stabilization (Completed)
+- Sprint 007 — Workflow Definition System (Completed)
 
 ### Planned Sprints
 
-- Sprint 007 — Subscriber Timeout
-- Sprint 008 — Retry Policy
-- Sprint 009 — Dead Letter Queue
-- Sprint 010 — Workflow Definition
-- Sprint 011 — Workflow Runtime
+- Sprint 008 — Workflow Runtime
+- Sprint 009 — Subscriber Timeout
+- Sprint 010 — Retry Policy
+- Sprint 011 — Dead Letter Queue
 - Sprint 012 — Agent Runtime
 
 ---
