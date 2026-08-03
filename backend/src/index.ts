@@ -45,17 +45,19 @@ app.post('/events', async (req, res) => {
     }
   });
 
-  const results = await eventBus.publish(baseEvent);
-  const routerResult = results[0];
+  const publishResult = await eventBus.publish(baseEvent);
+  const routerSubscriber = publishResult.subscriberResults.find(
+    (subscriberResult) => subscriberResult.subscriberName === 'router'
+  );
 
-  if (!routerResult) {
+  if (!routerSubscriber) {
     return res.status(500).json({
       success: false,
-      error: 'No subscribers registered'
+      error: 'Internal configuration error: router subscriber is not registered'
     });
   }
 
-  return res.status(routerResult.statusCode).json(routerResult.body);
+  return res.status(routerSubscriber.result.statusCode).json(routerSubscriber.result.body);
 });
 
 app.listen(port, () => {
