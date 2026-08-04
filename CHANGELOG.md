@@ -2,6 +2,57 @@
 
 All notable changes to VEP Studio will be documented in this file.
 
+## Sprint 010 — 2026-08-04
+
+### Added
+
+- structured `fork` and `join` workflow steps
+- dedicated parallel edges with stable branch identities
+- restricted ASCII branch-ID grammar
+- deterministic UTF-16 code-unit branch ordering
+- immutable branch execution snapshots
+- active parallel-region lifecycle and completed-region retention
+- concurrent all-settled branch execution
+- zero-action branches and multiple sequential parallel regions
+
+### Architecture
+
+- WorkflowRunner owns branch progression and join coordination directly
+- parent history is flattened atomically at the join barrier
+- branch-local history remains available in `parallelRegions`
+- branch conditions cannot inspect sibling branch state before the join
+- EventBus remains outside workflow control flow
+- OperationRegistry, ConditionEvaluator, and ExecutionContext remain unchanged
+
+### Failure and Duration Semantics
+
+- `parallel_branch_failed` locates aggregate branch failure at the paired join
+- `parallel_join_mismatch` represents defensive topology inconsistency
+- all branches settle before parent completion or failure
+- negative and non-finite elapsed durations normalize to zero
+- duration never determines branch order
+
+### Compatibility
+
+- existing linear and decision workflows remain compatible
+- `parallelRegions` is an enumerable serialization-safe execution field
+- no existing workflow definition migration is required
+
+### Verification
+
+- `npm run typecheck` — passed
+- `npm run build` — passed
+- `npm test` — passed, 50/50
+- existing pre-Sprint-010 tests — passed
+- parallel and correction tests — passed
+- `git diff --check` — passed
+
+### Deferred
+
+- persistence, recovery, retry, timeout, cancellation, and scheduling
+- nested parallelism, dynamic branches, worker pools, and custom join aggregation
+- human tasks, AI agents, metrics, tracing, HTTP endpoints, and visual design
+
 ## v0.3.0 — 2026-08-04
 
 ### Added

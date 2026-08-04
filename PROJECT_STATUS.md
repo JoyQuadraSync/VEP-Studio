@@ -4,16 +4,18 @@
 
 **v0.3.0**
 
-Version 0.3.0 establishes VEP Studio as a Decision Workflow Platform with a typed event foundation, declarative workflow definitions, immutable runtime snapshots, and deterministic conditional branching.
+The semantic product version remains v0.3.0. Current development extends that foundation with structured deterministic parallel workflow execution.
 
 ## Current Stage
 
-**Decision Workflow Platform**
+**Parallel Workflow Platform**
 
 ## Release Dashboard
 
 | Area | Status |
 |---|---|
+| Completed Sprints | 10 |
+| Automated Tests | 50 passing |
 | Event Platform | Stable foundation |
 | Strongly Typed Events | Complete |
 | Runtime Contracts | Complete |
@@ -23,8 +25,8 @@ Version 0.3.0 establishes VEP Studio as a Decision Workflow Platform with a type
 | Linear Workflow Runtime | Complete |
 | Operation Registry | Complete |
 | Decision & Conditional Workflow | Complete |
-| Parallel Workflow | Next milestone |
-| Persistence and Recovery | Planned |
+| Parallel Workflow | Complete |
+| Persistence and Recovery | Next milestone |
 | Human Tasks | Planned |
 | AI Agent Runtime | Planned |
 | Visual Workflow Designer | Planned |
@@ -42,6 +44,7 @@ Version 0.3.0 establishes VEP Studio as a Decision Workflow Platform with a type
 | Sprint 007 | Workflow Definition System | Completed |
 | Sprint 008 | Workflow Runtime | Completed |
 | Sprint 009 | Decision & Conditional Workflow | Completed |
+| Sprint 010 | Parallel Workflow | Completed |
 
 ## Current Capabilities
 
@@ -63,6 +66,12 @@ Version 0.3.0 establishes VEP Studio as a Decision Workflow Platform with a type
 - preserve immutable workflow execution snapshots
 - chain step input and output
 - expose structured failures and duration metadata
+- define structured fork/join regions with stable branch identities
+- execute isolated branches concurrently with all-settled semantics
+- retain immutable active and completed parallel-region snapshots
+- flatten parent history deterministically at the join barrier
+- preserve branch-local history and condition isolation
+- support zero-action branches and multiple sequential parallel regions
 
 ## Completed Components
 
@@ -116,6 +125,17 @@ Version 0.3.0 establishes VEP Studio as a Decision Workflow Platform with a type
 - deterministic branch selection
 - structured conditional failure codes
 
+### Parallel Workflow
+
+- `WorkflowForkStep`
+- `WorkflowJoinStep`
+- `WorkflowParallelEdge`
+- `WorkflowBranchExecution`
+- `WorkflowParallelExecution`
+- `WorkflowParallelRegionResult`
+- deterministic branch ordering and aggregation
+- all-settled barrier and join-located failure
+
 ## Architecture Health
 
 | Principle | Health | Evidence |
@@ -125,7 +145,7 @@ Version 0.3.0 establishes VEP Studio as a Decision Workflow Platform with a type
 | Determinism | Healthy | Injected clock and execution ID generation support controlled tests |
 | Immutability | Healthy | Definitions and execution transitions use readonly contracts and immutable snapshots |
 | Failure isolation | Healthy | Event subscribers and workflow operations produce isolated structured results |
-| Test coverage | Healthy | 32 tests cover events, definitions, validation, runtime, and conditional branching |
+| Test coverage | Healthy | 50 tests cover events, definitions, validation, linear, decision, and parallel runtime behavior |
 | Runtime coupling | Healthy | EventBus is outside workflow control flow; ExecutionContext remains event-specific |
 | Production readiness | Developing | Persistence, recovery, security, observability, and deployment remain future work |
 
@@ -141,7 +161,8 @@ Version 0.3.0 establishes VEP Studio as a Decision Workflow Platform with a type
 ## Known Limitations
 
 - workflow execution is in memory only
-- parallel workflows are not supported
+- nested and overlapping parallel workflows are not supported
+- branch cancellation and custom join aggregation are not supported
 - executions cannot be persisted, paused, recovered, cancelled, or resumed
 - retry, timeout, and dead-letter policies are not implemented
 - human tasks and AI agents are not implemented
@@ -152,8 +173,8 @@ Version 0.3.0 establishes VEP Studio as a Decision Workflow Platform with a type
 
 ## Next Milestone
 
-**Sprint 010 — Parallel Workflow**
+**Sprint 011 — Persistence & Recovery**
 
-The next milestone will expand workflow execution to coordinated parallel branches while preserving immutable definitions, immutable execution snapshots, deterministic runtime behavior, and the existing EventBus boundary.
+The next milestone will define durable storage and recovery for immutable workflow execution snapshots while preserving deterministic runtime behavior and existing architecture boundaries.
 
 See [ROADMAP.md](ROADMAP.md) for subsequent milestones.

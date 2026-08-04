@@ -8,7 +8,7 @@ VEP Studio is evolving into an event-driven workflow platform for connecting bus
 
 **v0.3.0**
 
-The current release includes the event platform foundation, declarative workflow definitions, immutable workflow runtime, and deterministic decision and conditional workflows.
+The semantic product release remains v0.3.0. Current development has completed structured Parallel Workflow and is moving to Persistence & Recovery.
 
 ## Completed Sprints
 
@@ -23,18 +23,15 @@ The current release includes the event platform foundation, declarative workflow
 | Sprint 007 | Workflow Definition System | Completed |
 | Sprint 008 | Workflow Runtime | Completed |
 | Sprint 009 | Decision & Conditional Workflow | Completed |
+| Sprint 010 | Parallel Workflow | Completed |
 
 ## Current Sprint
-
-### Sprint 010 — Parallel Workflow
-
-Support workflows with coordinated parallel branches.
-
-## Planned Sprints
 
 ### Sprint 011 — Persistence & Recovery
 
 Establish durable workflow state and execution recovery capabilities.
+
+## Planned Sprints
 
 ### Sprint 012 — Retry / Timeout / Dead Letter
 

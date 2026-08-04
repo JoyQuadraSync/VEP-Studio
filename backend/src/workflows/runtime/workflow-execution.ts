@@ -1,4 +1,8 @@
 import { WorkflowFailure } from './workflow-failure';
+import {
+  WorkflowParallelExecution,
+  WorkflowParallelRegionResult
+} from './workflow-parallel-execution';
 import { WorkflowState } from './workflow-state';
 import { WorkflowStepResult } from './workflow-step-result';
 
@@ -14,6 +18,8 @@ export interface WorkflowExecution {
   readonly stepResults: readonly WorkflowStepResult[];
   readonly failure?: WorkflowFailure;
   readonly durationMs?: number;
+  readonly activeParallel?: WorkflowParallelExecution;
+  readonly parallelRegions: readonly WorkflowParallelRegionResult[];
 }
 
 export interface WorkflowExecutionIdGenerator {

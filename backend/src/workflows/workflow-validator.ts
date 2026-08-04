@@ -5,11 +5,19 @@ import {
 } from './workflow-condition';
 import { WorkflowDefinition } from './workflow-definition';
 import {
+  getWorkflowEdgeSource,
+  getWorkflowEdgeTarget,
   isWorkflowConditionalEdge,
   isWorkflowDefaultEdge,
-  WorkflowEdge
+  isWorkflowParallelEdge,
+  WorkflowEdge,
+  WorkflowParallelEdge
 } from './workflow-edge';
-import { WorkflowStep } from './workflow-step';
+import {
+  getWorkflowStepKind,
+  WorkflowForkStep,
+  WorkflowStep
+} from './workflow-step';
 
 export interface WorkflowValidationIssue {
   readonly code: string;
@@ -62,14 +70,14 @@ export class GraphWorkflowValidator implements WorkflowValidator {
     const startStep = definition.steps.find((step) => step.id === definition.startStepId);
     const finishStep = definition.steps.find((step) => step.id === definition.finishStepId);
 
-    if (!startStep || startStep.kind !== 'start') {
+    if (!startStep || getWorkflowStepKind(startStep) !== 'start') {
       issues.push({
         code: 'INVALID_START_STEP',
         message: 'startStepId must reference a start step.'
       });
     }
 
-    if (!finishStep || finishStep.kind !== 'finish') {
+    if (!finishStep || getWorkflowStepKind(finishStep) !== 'finish') {
       issues.push({
         code: 'INVALID_FINISH_STEP',
         message: 'finishStepId must reference a finish step.'
@@ -87,29 +95,32 @@ export class GraphWorkflowValidator implements WorkflowValidator {
     const reverseAdjacency = this.createAdjacency(stepIds);
 
     for (const edge of definition.edges) {
+      const sourceStepId = getWorkflowEdgeSource(edge);
+      const targetStepId = getWorkflowEdgeTarget(edge);
+
       if (edgeIds.has(edge.id)) {
         issues.push({ code: 'DUPLICATE_EDGE_ID', message: `Duplicate edge id: ${edge.id}` });
       }
 
       edgeIds.add(edge.id);
 
-      if (!stepIds.has(edge.from)) {
+      if (!stepIds.has(sourceStepId)) {
         issues.push({
           code: 'UNKNOWN_EDGE_SOURCE',
-          message: `Edge ${edge.id} references unknown source step: ${edge.from}`
+          message: `Edge ${edge.id} references unknown source step: ${sourceStepId}`
         });
       }
 
-      if (!stepIds.has(edge.to)) {
+      if (!stepIds.has(targetStepId)) {
         issues.push({
           code: 'UNKNOWN_EDGE_TARGET',
-          message: `Edge ${edge.id} references unknown target step: ${edge.to}`
+          message: `Edge ${edge.id} references unknown target step: ${targetStepId}`
         });
       }
 
-      if (stepIds.has(edge.from) && stepIds.has(edge.to)) {
-        adjacency.get(edge.from)?.add(edge.to);
-        reverseAdjacency.get(edge.to)?.add(edge.from);
+      if (stepIds.has(sourceStepId) && stepIds.has(targetStepId)) {
+        adjacency.get(sourceStepId)?.add(targetStepId);
+        reverseAdjacency.get(targetStepId)?.add(sourceStepId);
       }
 
       if (isWorkflowConditionalEdge(edge)) {
@@ -127,10 +138,12 @@ export class GraphWorkflowValidator implements WorkflowValidator {
     for (const step of definition.steps) {
       this.validateStepEdges(
         step,
-        definition.edges.filter((edge) => edge.from === step.id),
+        definition.edges.filter((edge) => getWorkflowEdgeSource(edge) === step.id),
         issues
       );
     }
+
+    this.validateParallelRegions(definition, stepIds, reverseAdjacency, issues);
 
     if (startStep && finishStep) {
       const reachableFromStart = this.collectReachable(definition.startStepId, adjacency);
@@ -168,7 +181,9 @@ export class GraphWorkflowValidator implements WorkflowValidator {
     outgoingEdges: readonly WorkflowEdge[],
     issues: WorkflowValidationIssue[]
   ): void {
-    if (step.kind === 'finish') {
+    const stepKind = getWorkflowStepKind(step);
+
+    if (stepKind === 'finish') {
       if (outgoingEdges.length > 0) {
         issues.push({
           code: 'INVALID_FINISH_OUTGOING_EDGES',
@@ -179,7 +194,7 @@ export class GraphWorkflowValidator implements WorkflowValidator {
       return;
     }
 
-    if (step.kind === 'decision') {
+    if (stepKind === 'decision') {
       if (outgoingEdges.length === 0) {
         issues.push({
           code: 'DECISION_REQUIRES_OUTGOING_EDGE',
@@ -200,13 +215,14 @@ export class GraphWorkflowValidator implements WorkflowValidator {
         const edgeId = edge.id;
         const conditional = isWorkflowConditionalEdge(edge);
         const defaultEdge = isWorkflowDefaultEdge(edge);
+        const parallelEdge = isWorkflowParallelEdge(edge);
 
         if (conditional && defaultEdge) {
           issues.push({
             code: 'DEFAULT_EDGE_HAS_CONDITION',
             message: `Default edge ${edgeId} must not contain a condition.`
           });
-        } else if (!conditional && !defaultEdge) {
+        } else if (!conditional && !defaultEdge || parallelEdge) {
           issues.push({
             code: 'DECISION_EDGE_REQUIRES_CONDITION_OR_DEFAULT',
             message: `Decision edge ${edge.id} must be conditional or default.`
@@ -217,21 +233,477 @@ export class GraphWorkflowValidator implements WorkflowValidator {
       return;
     }
 
+    if (stepKind === 'fork') {
+      if (outgoingEdges.length < 2) {
+        issues.push({
+          code: 'FORK_REQUIRES_MULTIPLE_BRANCHES',
+          message: `Fork step ${step.id} must have at least two outgoing parallel edges.`
+        });
+      }
+
+      const branchIds = new Set<string>();
+
+      for (const edge of outgoingEdges) {
+        if (!isWorkflowParallelEdge(edge)) {
+          issues.push({
+            code: 'FORK_REQUIRES_PARALLEL_EDGE',
+            message: `Fork step ${step.id} must use parallel edges.`
+          });
+          continue;
+        }
+
+        if (!this.isValidBranchId(edge.branchId)) {
+          issues.push({
+            code: 'INVALID_PARALLEL_BRANCH_ID',
+            message: `Parallel branch id is invalid: ${edge.branchId}`
+          });
+        }
+
+        if (branchIds.has(edge.branchId)) {
+          issues.push({
+            code: 'DUPLICATE_PARALLEL_BRANCH_ID',
+            message: `Fork step ${step.id} contains duplicate branch id: ${edge.branchId}`
+          });
+        }
+
+        branchIds.add(edge.branchId);
+      }
+
+      return;
+    }
+
+    if (stepKind === 'join') {
+      if (outgoingEdges.length !== 1) {
+        issues.push({
+          code: 'JOIN_REQUIRES_ONE_OUTGOING_EDGE',
+          message: `Join step ${step.id} must have exactly one outgoing edge.`
+        });
+      }
+
+      for (const edge of outgoingEdges) {
+        if (
+          isWorkflowParallelEdge(edge) ||
+          isWorkflowConditionalEdge(edge) ||
+          isWorkflowDefaultEdge(edge)
+        ) {
+          issues.push({
+            code: 'JOIN_REQUIRES_UNCONDITIONAL_EDGE',
+            message: `Join step ${step.id} must use an unconditional edge.`
+          });
+        }
+      }
+
+      return;
+    }
+
     if (outgoingEdges.length !== 1) {
       issues.push({
         code: 'LINEAR_STEP_REQUIRES_ONE_OUTGOING_EDGE',
-        message: `${step.kind} step ${step.id} must have exactly one outgoing edge.`
+        message: `${stepKind} step ${step.id} must have exactly one outgoing edge.`
       });
     }
 
     for (const edge of outgoingEdges) {
-      if (isWorkflowConditionalEdge(edge) || isWorkflowDefaultEdge(edge)) {
+      if (
+        isWorkflowParallelEdge(edge) ||
+        isWorkflowConditionalEdge(edge) ||
+        isWorkflowDefaultEdge(edge)
+      ) {
         issues.push({
           code: 'LINEAR_STEP_REQUIRES_UNCONDITIONAL_EDGE',
-          message: `${step.kind} step ${step.id} must use an unconditional edge.`
+          message: `${stepKind} step ${step.id} must use an unconditional edge.`
         });
       }
     }
+  }
+
+  private validateParallelRegions(
+    definition: WorkflowDefinition,
+    stepIds: ReadonlySet<string>,
+    reverseAdjacency: ReadonlyMap<string, ReadonlySet<string>>,
+    issues: WorkflowValidationIssue[]
+  ): void {
+    const stepById = new Map(definition.steps.map((step) => [step.id, step]));
+    const forks = definition.steps.filter(
+      (step): step is WorkflowForkStep => getWorkflowStepKind(step) === 'fork'
+    );
+    const joins = definition.steps.filter((step) => getWorkflowStepKind(step) === 'join');
+    const joinOwners = new Map<string, string>();
+    const globallyOwnedSteps = new Map<string, string>();
+
+    for (const join of joins) {
+      if (!('forkStepId' in join)) {
+        continue;
+      }
+
+      const fork = stepById.get(join.forkStepId);
+
+      if (!fork || getWorkflowStepKind(fork) !== 'fork') {
+        issues.push({
+          code: 'INVALID_JOIN_FORK_REFERENCE',
+          message: `Join step ${join.id} must reference an existing fork step.`
+        });
+      } else if (!('joinStepId' in fork) || fork.joinStepId !== join.id) {
+        issues.push({
+          code: 'PARALLEL_PAIR_MISMATCH',
+          message: `Join step ${join.id} and fork step ${join.forkStepId} must reference each other.`
+        });
+      }
+    }
+
+    for (const fork of forks) {
+      const join = stepById.get(fork.joinStepId);
+
+      if (!join || getWorkflowStepKind(join) !== 'join') {
+        issues.push({
+          code: 'INVALID_FORK_JOIN_REFERENCE',
+          message: `Fork step ${fork.id} must reference an existing join step.`
+        });
+        continue;
+      }
+
+      if (!('forkStepId' in join) || join.forkStepId !== fork.id) {
+        issues.push({
+          code: 'PARALLEL_PAIR_MISMATCH',
+          message: `Fork step ${fork.id} and join step ${join.id} must reference each other.`
+        });
+        continue;
+      }
+
+      const existingOwner = joinOwners.get(join.id);
+
+      if (existingOwner && existingOwner !== fork.id) {
+        issues.push({
+          code: 'JOIN_HAS_MULTIPLE_FORKS',
+          message: `Join step ${join.id} must belong to exactly one fork.`
+        });
+        continue;
+      }
+
+      joinOwners.set(join.id, fork.id);
+
+      const branchEdges = definition.edges.filter(
+        (edge): edge is WorkflowParallelEdge =>
+          getWorkflowEdgeSource(edge) === fork.id && isWorkflowParallelEdge(edge)
+      );
+
+      if (branchEdges.length < 2) {
+        continue;
+      }
+
+      const regionOwner = `${fork.id}:${join.id}`;
+      const branchOwnership = new Map<string, string>();
+      const reachesFork = this.collectReachable(fork.id, reverseAdjacency);
+
+      for (const branchEdge of branchEdges) {
+        this.validateParallelBranch(
+          definition,
+          stepById,
+          fork,
+          join.id,
+          branchEdge,
+          branchOwnership,
+          issues
+        );
+      }
+
+      for (const [stepId, branchId] of branchOwnership) {
+        const globalOwner = globallyOwnedSteps.get(stepId);
+
+        if (globalOwner && globalOwner !== regionOwner) {
+          issues.push({
+            code: 'OVERLAPPING_PARALLEL_REGIONS',
+            message: `Step ${stepId} belongs to overlapping parallel regions.`
+          });
+        }
+
+        globallyOwnedSteps.set(stepId, regionOwner);
+        this.validateParallelBranchIncomingEdges(
+          definition,
+          fork.id,
+          stepId,
+          branchId,
+          branchOwnership,
+          issues
+        );
+
+        const step = stepById.get(stepId);
+
+        if (step && getWorkflowStepKind(step) === 'decision') {
+          this.validateParallelConditionVisibility(
+            definition,
+            step.id,
+            fork.id,
+            branchId,
+            branchOwnership,
+            reachesFork,
+            stepIds,
+            issues
+          );
+        }
+      }
+
+      this.validateParallelJoinIncomingEdges(
+        definition,
+        fork.id,
+        join.id,
+        branchOwnership,
+        issues
+      );
+    }
+  }
+
+  private validateParallelBranch(
+    definition: WorkflowDefinition,
+    stepById: ReadonlyMap<string, WorkflowStep>,
+    fork: WorkflowForkStep,
+    joinStepId: string,
+    branchEdge: WorkflowParallelEdge,
+    branchOwnership: Map<string, string>,
+    issues: WorkflowValidationIssue[]
+  ): void {
+    const evaluated = new Map<string, boolean>();
+    const active = new Set<string>();
+
+    const reachesJoin = (stepId: string): boolean => {
+      if (stepId === joinStepId) {
+        return true;
+      }
+
+      const memoized = evaluated.get(stepId);
+
+      if (memoized !== undefined) {
+        return memoized;
+      }
+
+      if (active.has(stepId)) {
+        issues.push({
+          code: 'PARALLEL_BRANCH_LOOP',
+          message: `Parallel branch ${branchEdge.branchId} must not contain a loop.`
+        });
+        evaluated.set(stepId, false);
+        return false;
+      }
+
+      const step = stepById.get(stepId);
+
+      if (!step) {
+        evaluated.set(stepId, false);
+        return false;
+      }
+
+      const kind = getWorkflowStepKind(step);
+
+      if (kind === 'start') {
+        issues.push({
+          code: 'PARALLEL_BRANCH_INVALID_STEP_KIND',
+          message: `Parallel branch ${branchEdge.branchId} must not contain a start step.`
+        });
+        evaluated.set(stepId, false);
+        return false;
+      }
+
+      if (kind === 'fork') {
+        issues.push({
+          code: 'NESTED_PARALLEL_REGION',
+          message: `Parallel branch ${branchEdge.branchId} must not contain a nested fork.`
+        });
+        evaluated.set(stepId, false);
+        return false;
+      }
+
+      if (kind === 'join') {
+        issues.push({
+          code: 'PARALLEL_BRANCH_REACHES_WRONG_JOIN',
+          message: `Parallel branch ${branchEdge.branchId} reaches an unpaired join.`
+        });
+        evaluated.set(stepId, false);
+        return false;
+      }
+
+      if (kind === 'finish') {
+        issues.push({
+          code: 'PARALLEL_BRANCH_BYPASSES_JOIN',
+          message: `Parallel branch ${branchEdge.branchId} reaches finish before its join.`
+        });
+        evaluated.set(stepId, false);
+        return false;
+      }
+
+      const existingOwner = branchOwnership.get(stepId);
+
+      if (existingOwner && existingOwner !== branchEdge.branchId) {
+        issues.push({
+          code: 'PARALLEL_BRANCH_OWNERSHIP_CONFLICT',
+          message: `Step ${stepId} is shared by parallel branches ${existingOwner} and ${branchEdge.branchId}.`
+        });
+        evaluated.set(stepId, false);
+        return false;
+      }
+
+      branchOwnership.set(stepId, branchEdge.branchId);
+      active.add(stepId);
+
+      const outgoingEdges = definition.edges.filter(
+        (edge) => getWorkflowEdgeSource(edge) === stepId
+      );
+
+      if (outgoingEdges.length === 0) {
+        issues.push({
+          code: 'PARALLEL_BRANCH_DEAD_END',
+          message: `Parallel branch ${branchEdge.branchId} must reach join ${joinStepId}.`
+        });
+        active.delete(stepId);
+        evaluated.set(stepId, false);
+        return false;
+      }
+
+      const everyPathReachesJoin = outgoingEdges.every((edge) =>
+        reachesJoin(getWorkflowEdgeTarget(edge))
+      );
+      active.delete(stepId);
+      evaluated.set(stepId, everyPathReachesJoin);
+      return everyPathReachesJoin;
+    };
+
+    if (!reachesJoin(branchEdge.targetStepId)) {
+      issues.push({
+        code: 'PARALLEL_BRANCH_MUST_REACH_JOIN',
+        message: `Parallel branch ${branchEdge.branchId} must reach join ${joinStepId} on every path.`
+      });
+    }
+  }
+
+  private validateParallelBranchIncomingEdges(
+    definition: WorkflowDefinition,
+    forkStepId: string,
+    stepId: string,
+    branchId: string,
+    branchOwnership: ReadonlyMap<string, string>,
+    issues: WorkflowValidationIssue[]
+  ): void {
+    const incomingEdges = definition.edges.filter(
+      (edge) => getWorkflowEdgeTarget(edge) === stepId
+    );
+
+    for (const edge of incomingEdges) {
+      const sourceStepId = getWorkflowEdgeSource(edge);
+      const fromFork =
+        sourceStepId === forkStepId &&
+        isWorkflowParallelEdge(edge) &&
+        edge.branchId === branchId;
+      const fromSameBranch = branchOwnership.get(sourceStepId) === branchId;
+
+      if (!fromFork && !fromSameBranch) {
+        issues.push({
+          code: 'PARALLEL_BRANCH_OUTSIDE_ENTRY',
+          message: `Step ${stepId} has an incoming edge from outside branch ${branchId}.`
+        });
+      }
+    }
+  }
+
+  private validateParallelJoinIncomingEdges(
+    definition: WorkflowDefinition,
+    forkStepId: string,
+    joinStepId: string,
+    branchOwnership: ReadonlyMap<string, string>,
+    issues: WorkflowValidationIssue[]
+  ): void {
+    const incomingEdges = definition.edges.filter(
+      (edge) => getWorkflowEdgeTarget(edge) === joinStepId
+    );
+
+    for (const edge of incomingEdges) {
+      const sourceStepId = getWorkflowEdgeSource(edge);
+      const directBranch = sourceStepId === forkStepId && isWorkflowParallelEdge(edge);
+      const ownedBranchStep = branchOwnership.has(sourceStepId);
+
+      if (!directBranch && !ownedBranchStep) {
+        issues.push({
+          code: 'PARALLEL_JOIN_OUTSIDE_ENTRY',
+          message: `Join step ${joinStepId} has an incoming edge from outside its fork region.`
+        });
+      }
+    }
+  }
+
+  private validateParallelConditionVisibility(
+    definition: WorkflowDefinition,
+    decisionStepId: string,
+    forkStepId: string,
+    branchId: string,
+    branchOwnership: ReadonlyMap<string, string>,
+    reachesFork: ReadonlySet<string>,
+    stepIds: ReadonlySet<string>,
+    issues: WorkflowValidationIssue[]
+  ): void {
+    const outgoingEdges = definition.edges.filter(
+      (edge) => getWorkflowEdgeSource(edge) === decisionStepId && isWorkflowConditionalEdge(edge)
+    );
+
+    for (const edge of outgoingEdges) {
+      if (!isWorkflowConditionalEdge(edge)) {
+        continue;
+      }
+
+      const references = this.collectCompletedStepReferences(edge.condition);
+
+      for (const referencedStepId of references) {
+        if (!stepIds.has(referencedStepId)) {
+          continue;
+        }
+
+        const sameBranch = branchOwnership.get(referencedStepId) === branchId;
+        const preFork = reachesFork.has(referencedStepId);
+
+        if (!sameBranch && !preFork && referencedStepId !== forkStepId) {
+          issues.push({
+            code: 'PARALLEL_CONDITION_REFERENCE_OUTSIDE_BRANCH',
+            message: `Decision step ${decisionStepId} references a step outside its visible branch history: ${referencedStepId}`
+          });
+        }
+      }
+    }
+  }
+
+  private collectCompletedStepReferences(condition: WorkflowCondition): readonly string[] {
+    const references: string[] = [];
+
+    const collectOperand = (operand: ConditionOperand): void => {
+      if (operand.kind === 'reference' && operand.reference.source === 'completed_step_result') {
+        references.push(operand.reference.stepId);
+      }
+    };
+
+    switch (condition.operator) {
+      case 'equals':
+      case 'not_equals':
+      case 'greater_than':
+      case 'greater_than_or_equal':
+      case 'less_than':
+      case 'less_than_or_equal':
+        collectOperand(condition.left);
+        collectOperand(condition.right);
+        break;
+      case 'exists':
+      case 'not_exists':
+        if (condition.operand.reference.source === 'completed_step_result') {
+          references.push(condition.operand.reference.stepId);
+        }
+        break;
+      case 'and':
+      case 'or':
+        for (const child of condition.conditions) {
+          references.push(...this.collectCompletedStepReferences(child));
+        }
+        break;
+      case 'not':
+        references.push(...this.collectCompletedStepReferences(condition.condition));
+        break;
+    }
+
+    return references;
   }
 
   private validateCondition(
@@ -443,6 +915,10 @@ export class GraphWorkflowValidator implements WorkflowValidator {
 
   private isNamespacedWorkflowId(workflowId: string): boolean {
     return /^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)+$/.test(workflowId);
+  }
+
+  private isValidBranchId(branchId: string): boolean {
+    return /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/.test(branchId);
   }
 
   private createAdjacency(stepIds: ReadonlySet<string>): Map<string, Set<string>> {

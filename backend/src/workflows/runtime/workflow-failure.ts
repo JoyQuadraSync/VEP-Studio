@@ -8,7 +8,9 @@ export type WorkflowFailureCode =
   | 'condition_evaluation_failed'
   | 'multiple_matching_branches'
   | 'no_matching_branch'
-  | 'invalid_default_branch';
+  | 'invalid_default_branch'
+  | 'parallel_branch_failed'
+  | 'parallel_join_mismatch';
 
 export interface WorkflowFailure {
   readonly code: WorkflowFailureCode;

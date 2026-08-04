@@ -96,7 +96,8 @@ test('WorkflowRunner creates one execution aggregate with fixed identity and inp
     currentStepId: 'start',
     workflowInput,
     completedSteps: [],
-    stepResults: []
+    stepResults: [],
+    parallelRegions: []
   });
   assert.equal(clock.callCount, 0);
 });

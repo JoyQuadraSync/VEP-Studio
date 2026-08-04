@@ -1,24 +1,52 @@
 import { Clock } from '../../runtime/services/clock';
 import { WorkflowDefinition } from '../workflow-definition';
 import {
+  getWorkflowEdgeSource,
+  getWorkflowEdgeTarget,
   isWorkflowConditionalEdge,
   isWorkflowDefaultEdge,
-  WorkflowEdge
+  isWorkflowParallelEdge,
+  WorkflowEdge,
+  WorkflowParallelEdge
 } from '../workflow-edge';
-import { WorkflowStep } from '../workflow-step';
+import {
+  getWorkflowStepKind,
+  WorkflowForkStep,
+  WorkflowStep
+} from '../workflow-step';
 import { ConditionEvaluator } from './condition-evaluator';
 import { OperationRegistry } from './operation-registry';
 import { WorkflowExecution, WorkflowExecutionIdGenerator } from './workflow-execution';
 import { WorkflowFailure } from './workflow-failure';
+import {
+  ParallelBranchResult,
+  WorkflowBranchExecution,
+  WorkflowFailedParallelRegionResult,
+  WorkflowParallelExecution,
+  WorkflowParallelRegionResult
+} from './workflow-parallel-execution';
 import { WorkflowState, WorkflowStepResultStatus } from './workflow-state';
 import { WorkflowStepResult } from './workflow-step-result';
 
+type NextStepResult =
+  | { readonly stepId: string; readonly failure?: undefined }
+  | { readonly stepId?: undefined; readonly failure: WorkflowFailure };
+
+type ParallelRegionExecutionResult =
+  | {
+      readonly execution: WorkflowExecution;
+      readonly output: readonly ParallelBranchResult[];
+      readonly failure?: undefined;
+    }
+  | {
+      readonly execution: WorkflowExecution;
+      readonly output?: undefined;
+      readonly failure: WorkflowFailure;
+    };
+
 export interface WorkflowRunner {
   createExecution(definition: WorkflowDefinition, workflowInput: unknown): WorkflowExecution;
-  run(
-    definition: WorkflowDefinition,
-    execution: WorkflowExecution
-  ): Promise<WorkflowExecution>;
+  run(definition: WorkflowDefinition, execution: WorkflowExecution): Promise<WorkflowExecution>;
 }
 
 export class InMemoryWorkflowRunner implements WorkflowRunner {
@@ -38,7 +66,8 @@ export class InMemoryWorkflowRunner implements WorkflowRunner {
       currentStepId: definition.startStepId,
       workflowInput,
       completedSteps: [],
-      stepResults: []
+      stepResults: [],
+      parallelRegions: []
     };
   }
 
@@ -54,32 +83,35 @@ export class InMemoryWorkflowRunner implements WorkflowRunner {
       ...execution,
       state: WorkflowState.RUNNING,
       completedSteps: [...execution.completedSteps],
-      stepResults: [...execution.stepResults]
+      stepResults: [...execution.stepResults],
+      parallelRegions: [...execution.parallelRegions]
     };
 
     while (currentExecution.state === WorkflowState.RUNNING) {
-      const step = definition.steps.find(
-        (candidate) => candidate.id === currentExecution.currentStepId
-      );
+      const step = this.findStep(definition, currentExecution.currentStepId);
 
       if (!step) {
-        const failure: WorkflowFailure = {
-          code: 'invalid_step',
-          message: 'Workflow references a step that does not exist.',
-          stepId: currentExecution.currentStepId
-        };
-
-        return this.failExecution(currentExecution, failure, executionStartedAt);
+        return this.failExecution(
+          currentExecution,
+          {
+            code: 'invalid_step',
+            message: 'Workflow references a step that does not exist.',
+            stepId: currentExecution.currentStepId
+          },
+          executionStartedAt
+        );
       }
 
       if (currentExecution.completedSteps.includes(step.id)) {
-        const failure: WorkflowFailure = {
-          code: 'invalid_step',
-          message: 'Workflow attempted to execute a completed step again.',
-          stepId: step.id
-        };
-
-        return this.failExecution(currentExecution, failure, executionStartedAt);
+        return this.failExecution(
+          currentExecution,
+          {
+            code: 'invalid_step',
+            message: 'Workflow attempted to execute a completed step again.',
+            stepId: step.id
+          },
+          executionStartedAt
+        );
       }
 
       const stepResult = await this.executeStep(step, currentValue, currentExecution);
@@ -102,25 +134,60 @@ export class InMemoryWorkflowRunner implements WorkflowRunner {
         stepResults: [...currentExecution.stepResults, stepResult]
       };
 
-      if (step.kind === 'finish') {
-        if (definition.edges.some((edge) => edge.from === step.id)) {
-          const failure: WorkflowFailure = {
-            code: 'invalid_finish_step',
-            message: 'Finish step must not have outgoing edges.',
-            stepId: step.id
-          };
+      const stepKind = getWorkflowStepKind(step);
 
-          return this.failExecution(currentExecution, failure, executionStartedAt);
+      if (stepKind === 'finish') {
+        if (definition.edges.some((edge) => getWorkflowEdgeSource(edge) === step.id)) {
+          return this.failExecution(
+            currentExecution,
+            {
+              code: 'invalid_finish_step',
+              message: 'Finish step must not have outgoing edges.',
+              stepId: step.id
+            },
+            executionStartedAt
+          );
         }
-
-        const executionFinishedAt = this.clock.now();
 
         return {
           ...currentExecution,
           state: WorkflowState.COMPLETED,
           workflowOutput: currentValue,
-          durationMs: this.durationMs(executionStartedAt, executionFinishedAt)
+          durationMs: this.durationMs(executionStartedAt, this.clock.now())
         };
+      }
+
+      if (stepKind === 'fork') {
+        if (!('joinStepId' in step)) {
+          return this.failExecution(
+            currentExecution,
+            this.parallelJoinMismatch(step.id),
+            executionStartedAt
+          );
+        }
+
+        const parallelResult = await this.executeParallelRegion(
+          definition,
+          step,
+          currentValue,
+          currentExecution
+        );
+        currentExecution = parallelResult.execution;
+
+        if (parallelResult.failure) {
+          return this.failExecution(
+            currentExecution,
+            parallelResult.failure,
+            executionStartedAt
+          );
+        }
+
+        currentValue = parallelResult.output;
+        currentExecution = {
+          ...currentExecution,
+          currentStepId: step.joinStepId
+        };
+        continue;
       }
 
       const nextStep = this.resolveNextStep(
@@ -135,10 +202,7 @@ export class InMemoryWorkflowRunner implements WorkflowRunner {
         return this.failExecution(currentExecution, nextStep.failure, executionStartedAt);
       }
 
-      currentExecution = {
-        ...currentExecution,
-        currentStepId: nextStep.stepId
-      };
+      currentExecution = { ...currentExecution, currentStepId: nextStep.stepId };
     }
 
     return currentExecution;
@@ -158,6 +222,280 @@ export class InMemoryWorkflowRunner implements WorkflowRunner {
     if (execution.state !== WorkflowState.CREATED) {
       throw new Error('Workflow execution must be in the created state before running.');
     }
+
+    if (execution.activeParallel) {
+      throw new Error('Workflow execution must not contain active parallel state before running.');
+    }
+  }
+
+  private async executeParallelRegion(
+    definition: WorkflowDefinition,
+    fork: WorkflowForkStep,
+    input: unknown,
+    execution: WorkflowExecution
+  ): Promise<ParallelRegionExecutionResult> {
+    const regionStartedAt = this.clock.now();
+    const join = this.findStep(definition, fork.joinStepId);
+    const forkOutgoingEdges = definition.edges.filter(
+      (edge) => getWorkflowEdgeSource(edge) === fork.id
+    );
+    const branchEdges = forkOutgoingEdges
+      .filter(
+        (edge): edge is WorkflowParallelEdge => isWorkflowParallelEdge(edge)
+      )
+      .sort((left, right) => this.compareBranchIds(left.branchId, right.branchId));
+
+    if (
+      !join ||
+      getWorkflowStepKind(join) !== 'join' ||
+      !('forkStepId' in join) ||
+      join.forkStepId !== fork.id ||
+      branchEdges.length !== forkOutgoingEdges.length ||
+      branchEdges.length < 2 ||
+      !this.hasValidRuntimeBranchIds(branchEdges)
+    ) {
+      return {
+        execution,
+        failure: this.parallelJoinMismatch(fork.joinStepId)
+      };
+    }
+
+    const pendingBranches: readonly WorkflowBranchExecution[] = branchEdges.map((edge) => ({
+      branchId: edge.branchId,
+      startStepId: edge.targetStepId,
+      currentStepId: edge.targetStepId,
+      state: 'pending',
+      input,
+      completedSteps: [],
+      stepResults: []
+    }));
+    const activeParallel: WorkflowParallelExecution = {
+      forkStepId: fork.id,
+      joinStepId: fork.joinStepId,
+      input,
+      branches: pendingBranches
+    };
+    let activeExecution: WorkflowExecution = { ...execution, activeParallel };
+    const runningBranches = pendingBranches.map((branch) => ({
+      ...branch,
+      state: 'running' as const,
+      completedSteps: [...branch.completedSteps],
+      stepResults: [...branch.stepResults]
+    }));
+
+    activeExecution = {
+      ...activeExecution,
+      activeParallel: { ...activeParallel, branches: runningBranches }
+    };
+
+    const settlements = await Promise.allSettled(
+      runningBranches.map((branch) =>
+        this.executeBranch(definition, fork.joinStepId, branch, activeExecution)
+      )
+    );
+    const branches = settlements
+      .map((settlement, index): WorkflowBranchExecution => {
+        if (settlement.status === 'fulfilled') {
+          return settlement.value;
+        }
+
+        const branch = runningBranches[index];
+        const { currentStepId: ignoredCurrentStepId, ...branchWithoutCurrentStep } = branch;
+        void ignoredCurrentStepId;
+        return {
+          ...branchWithoutCurrentStep,
+          state: 'failed',
+          failure: this.parallelJoinMismatch(fork.joinStepId),
+          durationMs: 0
+        };
+      })
+      .sort((left, right) => this.compareBranchIds(left.branchId, right.branchId));
+    const regionDurationMs = this.durationMs(regionStartedAt, this.clock.now());
+    const branchCompletedSteps = branches.flatMap((branch) => branch.completedSteps);
+    const branchStepResults = branches.flatMap((branch) => branch.stepResults);
+    const failedBranches = branches.filter((branch) => branch.state === 'failed');
+
+    if (failedBranches.length > 0) {
+      const failure: WorkflowFailure = {
+        code: 'parallel_branch_failed',
+        message: 'One or more parallel branches failed.',
+        stepId: fork.joinStepId
+      };
+      const region: WorkflowFailedParallelRegionResult = {
+        forkStepId: fork.id,
+        joinStepId: fork.joinStepId,
+        state: 'failed',
+        branches,
+        failure,
+        durationMs: regionDurationMs
+      };
+
+      return {
+        execution: {
+          ...this.withoutActiveParallel(activeExecution),
+          currentStepId: fork.joinStepId,
+          completedSteps: [...activeExecution.completedSteps, ...branchCompletedSteps],
+          stepResults: [...activeExecution.stepResults, ...branchStepResults],
+          parallelRegions: [...activeExecution.parallelRegions, region]
+        },
+        failure
+      };
+    }
+
+    const output: readonly ParallelBranchResult[] = branches.map((branch) => ({
+      branchId: branch.branchId,
+      output: branch.output
+    }));
+    const region: WorkflowParallelRegionResult = {
+      forkStepId: fork.id,
+      joinStepId: fork.joinStepId,
+      state: 'completed',
+      branches,
+      output,
+      durationMs: regionDurationMs
+    };
+
+    return {
+      execution: {
+        ...this.withoutActiveParallel(activeExecution),
+        currentStepId: fork.joinStepId,
+        completedSteps: [...activeExecution.completedSteps, ...branchCompletedSteps],
+        stepResults: [...activeExecution.stepResults, ...branchStepResults],
+        parallelRegions: [...activeExecution.parallelRegions, region]
+      },
+      output
+    };
+  }
+
+  private async executeBranch(
+    definition: WorkflowDefinition,
+    joinStepId: string,
+    initialBranch: WorkflowBranchExecution,
+    parentExecution: WorkflowExecution
+  ): Promise<WorkflowBranchExecution> {
+    const branchStartedAt = this.clock.now();
+    let branch = initialBranch;
+    let currentValue = initialBranch.input;
+
+    while (branch.state === 'running') {
+      if (branch.currentStepId === joinStepId) {
+        const { currentStepId: ignoredCurrentStepId, ...branchWithoutCurrentStep } = branch;
+        void ignoredCurrentStepId;
+        return {
+          ...branchWithoutCurrentStep,
+          state: 'completed',
+          output: currentValue,
+          durationMs: this.durationMs(branchStartedAt, this.clock.now())
+        };
+      }
+
+      const currentStepId = branch.currentStepId;
+
+      if (!currentStepId) {
+        return this.failBranch(
+          branch,
+          this.parallelJoinMismatch(joinStepId),
+          branchStartedAt
+        );
+      }
+
+      const step = this.findStep(definition, currentStepId);
+
+      if (!step) {
+        return this.failBranch(
+          branch,
+          {
+            code: 'invalid_step',
+            message: 'Workflow references a step that does not exist.',
+            stepId: currentStepId
+          },
+          branchStartedAt
+        );
+      }
+
+      const stepKind = getWorkflowStepKind(step);
+
+      if (
+        stepKind === 'start' ||
+        stepKind === 'fork' ||
+        stepKind === 'join' ||
+        stepKind === 'finish'
+      ) {
+        return this.failBranch(
+          branch,
+          this.parallelJoinMismatch(joinStepId),
+          branchStartedAt
+        );
+      }
+
+      if (branch.completedSteps.includes(step.id)) {
+        return this.failBranch(
+          branch,
+          {
+            code: 'invalid_step',
+            message: 'Workflow attempted to execute a completed step again.',
+            stepId: step.id
+          },
+          branchStartedAt
+        );
+      }
+
+      const branchExecutionView: WorkflowExecution = {
+        ...parentExecution,
+        stepResults: [...parentExecution.stepResults, ...branch.stepResults]
+      };
+      const stepResult = await this.executeStep(step, currentValue, branchExecutionView);
+
+      if (stepResult.status === WorkflowStepResultStatus.FAILED) {
+        return this.failBranch(
+          { ...branch, stepResults: [...branch.stepResults, stepResult] },
+          stepResult.failure ?? this.parallelJoinMismatch(joinStepId),
+          branchStartedAt
+        );
+      }
+
+      currentValue = stepResult.output;
+      branch = {
+        ...branch,
+        completedSteps: [...branch.completedSteps, step.id],
+        stepResults: [...branch.stepResults, stepResult]
+      };
+
+      const nextStep = this.resolveNextStep(
+        definition,
+        step,
+        {
+          ...branchExecutionView,
+          stepResults: [...parentExecution.stepResults, ...branch.stepResults]
+        },
+        stepResult.input,
+        stepResult.output
+      );
+
+      if (nextStep.failure) {
+        return this.failBranch(branch, nextStep.failure, branchStartedAt);
+      }
+
+      branch = { ...branch, currentStepId: nextStep.stepId };
+    }
+
+    return branch;
+  }
+
+  private failBranch(
+    branch: WorkflowBranchExecution,
+    failure: WorkflowFailure,
+    branchStartedAt: Date
+  ): WorkflowBranchExecution {
+    const { currentStepId: ignoredCurrentStepId, ...branchWithoutCurrentStep } = branch;
+    void ignoredCurrentStepId;
+
+    return {
+      ...branchWithoutCurrentStep,
+      state: 'failed',
+      failure,
+      durationMs: this.durationMs(branchStartedAt, this.clock.now())
+    };
   }
 
   private async executeStep(
@@ -167,22 +505,19 @@ export class InMemoryWorkflowRunner implements WorkflowRunner {
   ): Promise<WorkflowStepResult> {
     const startedAt = this.clock.now();
 
-    if (step.kind !== 'action') {
-      const finishedAt = this.clock.now();
-
+    if (getWorkflowStepKind(step) !== 'action' || !('operation' in step)) {
       return {
         stepId: step.id,
         status: WorkflowStepResultStatus.COMPLETED,
         input,
         output: input,
-        durationMs: this.durationMs(startedAt, finishedAt)
+        durationMs: this.durationMs(startedAt, this.clock.now())
       };
     }
 
     const handler = this.operationRegistry.resolve(step.operation);
 
     if (!handler) {
-      const finishedAt = this.clock.now();
       const failure: WorkflowFailure = {
         code: 'operation_not_registered',
         message: 'Workflow operation is not registered.',
@@ -195,7 +530,7 @@ export class InMemoryWorkflowRunner implements WorkflowRunner {
         status: WorkflowStepResultStatus.FAILED,
         input,
         failure,
-        durationMs: this.durationMs(startedAt, finishedAt)
+        durationMs: this.durationMs(startedAt, this.clock.now())
       };
     }
 
@@ -210,17 +545,15 @@ export class InMemoryWorkflowRunner implements WorkflowRunner {
           stepInput: input
         })
       );
-      const finishedAt = this.clock.now();
 
       return {
         stepId: step.id,
         status: WorkflowStepResultStatus.COMPLETED,
         input,
         output,
-        durationMs: this.durationMs(startedAt, finishedAt)
+        durationMs: this.durationMs(startedAt, this.clock.now())
       };
     } catch {
-      const finishedAt = this.clock.now();
       const failure: WorkflowFailure = {
         code: 'operation_failed',
         message: 'Workflow operation failed.',
@@ -233,7 +566,7 @@ export class InMemoryWorkflowRunner implements WorkflowRunner {
         status: WorkflowStepResultStatus.FAILED,
         input,
         failure,
-        durationMs: this.durationMs(startedAt, finishedAt)
+        durationMs: this.durationMs(startedAt, this.clock.now())
       };
     }
   }
@@ -244,13 +577,12 @@ export class InMemoryWorkflowRunner implements WorkflowRunner {
     execution: WorkflowExecution,
     stepInput: unknown,
     stepOutput: unknown
-  ): { readonly stepId: string; readonly failure?: undefined } | {
-    readonly stepId?: undefined;
-    readonly failure: WorkflowFailure;
-  } {
-    const outgoingEdges = definition.edges.filter((edge) => edge.from === step.id);
+  ): NextStepResult {
+    const outgoingEdges = definition.edges.filter(
+      (edge) => getWorkflowEdgeSource(edge) === step.id
+    );
 
-    if (step.kind === 'decision') {
+    if (getWorkflowStepKind(step) === 'decision') {
       return this.resolveDecisionBranch(
         definition,
         step,
@@ -283,7 +615,11 @@ export class InMemoryWorkflowRunner implements WorkflowRunner {
 
     const edge = outgoingEdges[0];
 
-    if (isWorkflowConditionalEdge(edge) || isWorkflowDefaultEdge(edge)) {
+    if (
+      isWorkflowParallelEdge(edge) ||
+      isWorkflowConditionalEdge(edge) ||
+      isWorkflowDefaultEdge(edge)
+    ) {
       return {
         failure: {
           code: 'invalid_step',
@@ -303,20 +639,16 @@ export class InMemoryWorkflowRunner implements WorkflowRunner {
     execution: WorkflowExecution,
     stepInput: unknown,
     stepOutput: unknown
-  ): { readonly stepId: string; readonly failure?: undefined } | {
-    readonly stepId?: undefined;
-    readonly failure: WorkflowFailure;
-  } {
+  ): NextStepResult {
     const conditionalEdges = outgoingEdges.filter(isWorkflowConditionalEdge);
     const defaultEdges = outgoingEdges.filter(isWorkflowDefaultEdge);
     const invalidEdges = outgoingEdges.filter(
-      (edge) => !isWorkflowConditionalEdge(edge) && !isWorkflowDefaultEdge(edge)
-    );
-    const overlappingEdges = outgoingEdges.filter(
-      (edge) => isWorkflowConditionalEdge(edge) && isWorkflowDefaultEdge(edge)
+      (edge) =>
+        isWorkflowParallelEdge(edge) ||
+        !isWorkflowConditionalEdge(edge) && !isWorkflowDefaultEdge(edge)
     );
 
-    if (defaultEdges.length > 1 || invalidEdges.length > 0 || overlappingEdges.length > 0) {
+    if (defaultEdges.length > 1 || invalidEdges.length > 0) {
       return {
         failure: {
           code: 'invalid_default_branch',
@@ -387,22 +719,68 @@ export class InMemoryWorkflowRunner implements WorkflowRunner {
   private resolveEdgeTarget(
     definition: WorkflowDefinition,
     edge: WorkflowEdge
-  ): { readonly stepId: string; readonly failure?: undefined } | {
-    readonly stepId?: undefined;
-    readonly failure: WorkflowFailure;
-  } {
+  ): NextStepResult {
+    const targetStepId = getWorkflowEdgeTarget(edge);
 
-    if (!definition.steps.some((candidate) => candidate.id === edge.to)) {
+    if (!this.findStep(definition, targetStepId)) {
       return {
         failure: {
           code: 'invalid_step',
           message: 'Workflow edge references a step that does not exist.',
-          stepId: edge.to
+          stepId: targetStepId
         }
       };
     }
 
-    return { stepId: edge.to };
+    return { stepId: targetStepId };
+  }
+
+  private findStep(definition: WorkflowDefinition, stepId: string): WorkflowStep | undefined {
+    return definition.steps.find((candidate) => candidate.id === stepId);
+  }
+
+  private hasValidRuntimeBranchIds(edges: readonly WorkflowParallelEdge[]): boolean {
+    const branchIds = new Set<string>();
+
+    for (const edge of edges) {
+      if (!/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/.test(edge.branchId)) {
+        return false;
+      }
+
+      if (branchIds.has(edge.branchId)) {
+        return false;
+      }
+
+      branchIds.add(edge.branchId);
+    }
+
+    return true;
+  }
+
+  private compareBranchIds(left: string, right: string): number {
+    if (left < right) {
+      return -1;
+    }
+
+    if (left > right) {
+      return 1;
+    }
+
+    return 0;
+  }
+
+  private withoutActiveParallel(execution: WorkflowExecution): WorkflowExecution {
+    const { activeParallel: ignoredActiveParallel, ...executionWithoutActiveParallel } = execution;
+    void ignoredActiveParallel;
+    return executionWithoutActiveParallel;
+  }
+
+  private parallelJoinMismatch(stepId: string): WorkflowFailure {
+    return {
+      code: 'parallel_join_mismatch',
+      message: 'Parallel branch did not reach its paired join.',
+      stepId
+    };
   }
 
   private failExecution(
@@ -410,7 +788,6 @@ export class InMemoryWorkflowRunner implements WorkflowRunner {
     failure: WorkflowFailure | undefined,
     executionStartedAt: Date
   ): WorkflowExecution {
-    const executionFinishedAt = this.clock.now();
     const normalizedFailure: WorkflowFailure = failure ?? {
       code: 'invalid_step',
       message: 'Workflow execution failed without structured failure information.',
@@ -421,11 +798,12 @@ export class InMemoryWorkflowRunner implements WorkflowRunner {
       ...execution,
       state: WorkflowState.FAILED,
       failure: normalizedFailure,
-      durationMs: this.durationMs(executionStartedAt, executionFinishedAt)
+      durationMs: this.durationMs(executionStartedAt, this.clock.now())
     };
   }
 
   private durationMs(startedAt: Date, finishedAt: Date): number {
-    return finishedAt.getTime() - startedAt.getTime();
+    const elapsedMs = finishedAt.getTime() - startedAt.getTime();
+    return Number.isFinite(elapsedMs) && elapsedMs >= 0 ? elapsedMs : 0;
   }
 }
