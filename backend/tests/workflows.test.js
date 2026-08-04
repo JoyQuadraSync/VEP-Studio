@@ -115,13 +115,24 @@ test('WorkflowValidator permits graph branching when every branch reaches finish
   const definition = createLinearWorkflow({
     steps: [
       { id: 'start', name: 'Start', kind: 'start' },
+      { id: 'decision', name: 'Decision', kind: 'decision' },
       { id: 'left', name: 'Left', kind: 'action', operation: 'test.left' },
       { id: 'right', name: 'Right', kind: 'action', operation: 'test.right' },
       { id: 'finish', name: 'Finish', kind: 'finish' }
     ],
     edges: [
-      { id: 'start-to-left', from: 'start', to: 'left' },
-      { id: 'start-to-right', from: 'start', to: 'right' },
+      { id: 'start-to-decision', from: 'start', to: 'decision' },
+      {
+        id: 'decision-to-left',
+        from: 'decision',
+        to: 'left',
+        condition: {
+          operator: 'equals',
+          left: { kind: 'literal', value: 'left' },
+          right: { kind: 'literal', value: 'left' }
+        }
+      },
+      { id: 'decision-to-right', from: 'decision', to: 'right', default: true },
       { id: 'left-to-finish', from: 'left', to: 'finish' },
       { id: 'right-to-finish', from: 'right', to: 'finish' }
     ]

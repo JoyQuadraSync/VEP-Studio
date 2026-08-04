@@ -4,6 +4,9 @@ const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 
 const { InMemoryOperationRegistry } = require('../dist/workflows/runtime/operation-registry');
+const {
+  DeclarativeConditionEvaluator
+} = require('../dist/workflows/runtime/condition-evaluator');
 const { InMemoryWorkflowRunner } = require('../dist/workflows/runtime/workflow-runner');
 const {
   WorkflowState,
@@ -71,6 +74,7 @@ function createRunner({ registry = new InMemoryOperationRegistry(), clock = crea
     clock,
     runner: new InMemoryWorkflowRunner(
       registry,
+      new DeclarativeConditionEvaluator(),
       clock,
       createIdGenerator('workflow-execution-1')
     )

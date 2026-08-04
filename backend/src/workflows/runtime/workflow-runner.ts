@@ -1,6 +1,12 @@
 import { Clock } from '../../runtime/services/clock';
 import { WorkflowDefinition } from '../workflow-definition';
+import {
+  isWorkflowConditionalEdge,
+  isWorkflowDefaultEdge,
+  WorkflowEdge
+} from '../workflow-edge';
 import { WorkflowStep } from '../workflow-step';
+import { ConditionEvaluator } from './condition-evaluator';
 import { OperationRegistry } from './operation-registry';
 import { WorkflowExecution, WorkflowExecutionIdGenerator } from './workflow-execution';
 import { WorkflowFailure } from './workflow-failure';
@@ -18,6 +24,7 @@ export interface WorkflowRunner {
 export class InMemoryWorkflowRunner implements WorkflowRunner {
   constructor(
     private readonly operationRegistry: OperationRegistry,
+    private readonly conditionEvaluator: ConditionEvaluator,
     private readonly clock: Clock,
     private readonly executionIdGenerator: WorkflowExecutionIdGenerator
   ) {}
@@ -116,7 +123,13 @@ export class InMemoryWorkflowRunner implements WorkflowRunner {
         };
       }
 
-      const nextStep = this.resolveNextStep(definition, step);
+      const nextStep = this.resolveNextStep(
+        definition,
+        step,
+        currentExecution,
+        stepResult.input,
+        stepResult.output
+      );
 
       if (nextStep.failure) {
         return this.failExecution(currentExecution, nextStep.failure, executionStartedAt);
@@ -227,12 +240,26 @@ export class InMemoryWorkflowRunner implements WorkflowRunner {
 
   private resolveNextStep(
     definition: WorkflowDefinition,
-    step: WorkflowStep
+    step: WorkflowStep,
+    execution: WorkflowExecution,
+    stepInput: unknown,
+    stepOutput: unknown
   ): { readonly stepId: string; readonly failure?: undefined } | {
     readonly stepId?: undefined;
     readonly failure: WorkflowFailure;
   } {
     const outgoingEdges = definition.edges.filter((edge) => edge.from === step.id);
+
+    if (step.kind === 'decision') {
+      return this.resolveDecisionBranch(
+        definition,
+        step,
+        outgoingEdges,
+        execution,
+        stepInput,
+        stepOutput
+      );
+    }
 
     if (outgoingEdges.length === 0) {
       return {
@@ -255,6 +282,115 @@ export class InMemoryWorkflowRunner implements WorkflowRunner {
     }
 
     const edge = outgoingEdges[0];
+
+    if (isWorkflowConditionalEdge(edge) || isWorkflowDefaultEdge(edge)) {
+      return {
+        failure: {
+          code: 'invalid_step',
+          message: 'Non-decision step must use an unconditional edge.',
+          stepId: step.id
+        }
+      };
+    }
+
+    return this.resolveEdgeTarget(definition, edge);
+  }
+
+  private resolveDecisionBranch(
+    definition: WorkflowDefinition,
+    step: WorkflowStep,
+    outgoingEdges: readonly WorkflowEdge[],
+    execution: WorkflowExecution,
+    stepInput: unknown,
+    stepOutput: unknown
+  ): { readonly stepId: string; readonly failure?: undefined } | {
+    readonly stepId?: undefined;
+    readonly failure: WorkflowFailure;
+  } {
+    const conditionalEdges = outgoingEdges.filter(isWorkflowConditionalEdge);
+    const defaultEdges = outgoingEdges.filter(isWorkflowDefaultEdge);
+    const invalidEdges = outgoingEdges.filter(
+      (edge) => !isWorkflowConditionalEdge(edge) && !isWorkflowDefaultEdge(edge)
+    );
+    const overlappingEdges = outgoingEdges.filter(
+      (edge) => isWorkflowConditionalEdge(edge) && isWorkflowDefaultEdge(edge)
+    );
+
+    if (defaultEdges.length > 1 || invalidEdges.length > 0 || overlappingEdges.length > 0) {
+      return {
+        failure: {
+          code: 'invalid_default_branch',
+          message: 'Decision step contains an invalid default or unconditional branch.',
+          stepId: step.id
+        }
+      };
+    }
+
+    const evaluationInput = {
+      workflowInput: execution.workflowInput,
+      currentStepInput: stepInput,
+      currentStepOutput: stepOutput,
+      completedStepResults: execution.stepResults,
+      executionMetadata: {
+        executionId: execution.executionId,
+        workflowId: execution.workflowId,
+        workflowVersion: execution.workflowVersion,
+        state: execution.state
+      }
+    };
+    const evaluations = conditionalEdges.map((edge) => ({
+      edge,
+      result: this.conditionEvaluator.evaluate(edge.condition, evaluationInput)
+    }));
+
+    if (evaluations.some((evaluation) => !evaluation.result.success)) {
+      return {
+        failure: {
+          code: 'condition_evaluation_failed',
+          message: 'Decision branch condition evaluation failed.',
+          stepId: step.id
+        }
+      };
+    }
+
+    const matchingEdges = evaluations
+      .filter((evaluation) => evaluation.result.success && evaluation.result.value)
+      .map((evaluation) => evaluation.edge);
+
+    if (matchingEdges.length > 1) {
+      return {
+        failure: {
+          code: 'multiple_matching_branches',
+          message: 'Decision step has multiple matching conditional branches.',
+          stepId: step.id
+        }
+      };
+    }
+
+    if (matchingEdges.length === 1) {
+      return this.resolveEdgeTarget(definition, matchingEdges[0]);
+    }
+
+    if (defaultEdges.length === 1) {
+      return this.resolveEdgeTarget(definition, defaultEdges[0]);
+    }
+
+    return {
+      failure: {
+        code: 'no_matching_branch',
+        message: 'Decision step has no matching branch and no default branch.',
+        stepId: step.id
+      }
+    };
+  }
+
+  private resolveEdgeTarget(
+    definition: WorkflowDefinition,
+    edge: WorkflowEdge
+  ): { readonly stepId: string; readonly failure?: undefined } | {
+    readonly stepId?: undefined;
+    readonly failure: WorkflowFailure;
+  } {
 
     if (!definition.steps.some((candidate) => candidate.id === edge.to)) {
       return {

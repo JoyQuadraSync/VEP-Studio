@@ -2,6 +2,53 @@
 
 All notable changes to VEP Studio will be documented in this file.
 
+## Sprint 009 — 2026-08-04
+
+### Added
+
+- `decision` workflow step
+- declarative `WorkflowCondition` and restricted condition references
+- conditional and default workflow edges
+- pure deterministic `ConditionEvaluator`
+- restricted workflow, step-result, and execution metadata condition sources
+- structured conditional failure codes
+
+### Architecture
+
+- conditions live on edges rather than decision steps
+- definitions remain serializable and contain no executable callbacks
+- ConditionEvaluator remains separate from WorkflowRunner
+- all conditional edges are evaluated before selection
+- multiple matching branches fail instead of using edge order or priority
+- EventBus remains outside condition evaluation and branch selection
+- `ExecutionContext` remains event-publication-specific
+
+### Branch Semantics
+
+- one matching edge is selected
+- zero matches use the unique default edge when present
+- zero matches without default produce `no_matching_branch`
+- multiple matches produce `multiple_matching_branches`
+- evaluation errors produce `condition_evaluation_failed`
+- malformed defaults produce `invalid_default_branch`
+
+### Verification
+
+- Typecheck and build passed
+- Full test suite passed, 32/32
+- EventBus tests passed, 4/4
+- Workflow Conditions tests passed, 10/10
+- Workflow Runtime tests passed, 12/12
+- Workflow Definition tests passed, 6/6
+
+### Deferred
+
+- parallel execution and loops
+- persistence and recovery
+- retry, timeout, cancellation, and scheduling
+- human tasks and AI agents
+- metrics, tracing, HTTP endpoints, and visual workflow design
+
 ## Sprint 008 — 2026-08-03
 
 ### Added

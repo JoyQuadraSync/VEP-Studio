@@ -22,18 +22,15 @@ The current release includes the event platform foundation, declarative workflow
 | Sprint 006 | Runtime Foundation Stabilization | Completed |
 | Sprint 007 | Workflow Definition System | Completed |
 | Sprint 008 | Workflow Runtime | Completed |
+| Sprint 009 | Decision & Conditional Workflow | Completed |
 
 ## Current Sprint
-
-### Sprint 009 — Decision & Conditional Workflow
-
-Expand workflow expressiveness beyond linear step progression through explicit decisions and conditional transitions.
-
-## Planned Sprints
 
 ### Sprint 010 — Parallel Workflow
 
 Support workflows with coordinated parallel branches.
+
+## Planned Sprints
 
 ### Sprint 011 — Persistence & Recovery
 
