@@ -3,390 +3,233 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta
-      name="description"
-      content="VEP Studio v0.3.0 is an event-driven, deterministic workflow platform built around explicit contracts and immutable execution snapshots."
-    >
-    <meta name="theme-color" content="#090d16">
-    <title>VEP Studio v0.3.0 — Decision Workflow</title>
+    <meta name="description" content="VEP Studio is a deterministic, event-driven workflow platform with immutable execution snapshots, structured parallelism, persistence, and recovery.">
+    <meta name="theme-color" content="#080b12">
+    <title>VEP Studio — Deterministic Workflow Infrastructure</title>
     <link rel="stylesheet" href="./styles.css">
     <script src="./app.js" defer></script>
   </head>
-  <body>
+  <body id="top">
     <a class="skip-link" href="#main-content">Skip to main content</a>
 
     <header class="site-header">
-      <div class="header-inner">
+      <div class="nav-shell">
         <a class="brand" href="#top" aria-label="VEP Studio home">
           <span class="brand-mark" aria-hidden="true">V</span>
           <span>VEP Studio</span>
         </a>
-
         <nav class="site-nav" aria-label="Primary navigation">
-          <a href="#capabilities">Capabilities</a>
           <a href="#architecture">Architecture</a>
-          <a href="#milestones">Milestones</a>
+          <a href="#runtime">Runtime</a>
+          <a href="#persistence">Persistence</a>
           <a href="#roadmap">Roadmap</a>
-          <a
-            href="https://github.com/JoyQuadraSync/VEP-Studio"
-            rel="noreferrer"
-          >GitHub</a>
+          <a href="#releases">Releases</a>
         </nav>
-
-        <span class="version-badge" aria-label="Current version 0.3.0">v0.3.0</span>
+        <a class="nav-github" href="https://github.com/JoyQuadraSync/VEP-Studio">GitHub <span aria-hidden="true">↗</span></a>
       </div>
     </header>
 
     <main id="main-content">
-      <section class="hero section" id="top" aria-labelledby="hero-title">
+      <section class="hero shell" aria-labelledby="hero-title">
         <div class="hero-copy reveal">
-          <p class="eyebrow">Event-driven workflow engineering</p>
-          <h1 id="hero-title">VEP Studio</h1>
-          <p class="release-name">v0.3.0 — Decision Workflow</p>
-          <p class="hero-statement">
-            An event-driven, deterministic workflow platform built around explicit
-            contracts, immutable execution snapshots, and architecture-first
-            development.
-          </p>
-          <div class="hero-actions" aria-label="Project links">
-            <a
-              class="button button-primary"
-              href="https://github.com/JoyQuadraSync/VEP-Studio"
-              rel="noreferrer"
-            >View on GitHub</a>
-            <a
-              class="button button-secondary"
-              href="https://github.com/JoyQuadraSync/VEP-Studio/releases/tag/v0.3.0"
-              rel="noreferrer"
-            >Release v0.3.0</a>
-            <a class="button button-quiet" href="#architecture">Explore Architecture</a>
+          <p class="kicker"><span class="signal" aria-hidden="true"></span> Persistent Workflow Platform</p>
+          <h1 id="hero-title">Persistence-ready workflows.<br><span>Explicit state.</span><br>Deterministic recovery.</h1>
+          <p class="hero-lede">VEP Studio is an event-driven workflow platform built around strongly typed contracts, immutable execution snapshots, declarative branching, structured parallelism, and recoverable state.</p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="https://github.com/JoyQuadraSync/VEP-Studio">Explore the repository</a>
+            <a class="button" href="https://github.com/JoyQuadraSync/VEP-Studio/blob/main/ARCHITECTURE.md">Read the architecture</a>
           </div>
+          <dl class="hero-metrics" aria-label="Project metrics">
+            <div><dt>Version</dt><dd>v0.3.0</dd></div>
+            <div><dt>Completed</dt><dd>11 sprints</dd></div>
+            <div><dt>Verification</dt><dd>69 tests</dd></div>
+            <div><dt>Decisions</dt><dd>7 ADRs</dd></div>
+          </dl>
         </div>
 
-        <div class="hero-system reveal" aria-label="Platform architecture summary">
-          <div class="system-orbit" aria-hidden="true"></div>
-          <div class="system-node system-node-input">
-            <span>Event input</span>
-            <strong>Typed events</strong>
-          </div>
-          <div class="system-node system-node-definition">
-            <span>Definition</span>
-            <strong>Declarative graph</strong>
-          </div>
-          <div class="system-core">
-            <span>WorkflowRunner</span>
-            <strong>Deterministic control flow</strong>
-          </div>
-          <div class="system-node system-node-condition">
-            <span>Evaluation</span>
-            <strong>Pure conditions</strong>
-          </div>
-          <div class="system-node system-node-execution">
-            <span>Execution</span>
-            <strong>Immutable snapshots</strong>
-          </div>
-        </div>
-      </section>
-
-      <section class="positioning section section-compact" aria-labelledby="positioning-title">
-        <div class="section-heading reveal">
-          <p class="eyebrow">Product principles</p>
-          <h2 id="positioning-title">Engineered for explicit, inspectable execution</h2>
-          <p>
-            VEP Studio combines typed event infrastructure with a deterministic
-            workflow model. Its boundaries are designed before capabilities are
-            expanded.
-          </p>
-        </div>
-        <ul class="principle-list reveal" aria-label="Product positioning">
-          <li>Event-driven</li>
-          <li>Strongly typed</li>
-          <li>Deterministic</li>
-          <li>Architecture-first</li>
-          <li>Built with TypeScript</li>
-          <li>Designed to evolve toward workflow automation and governed AI agents</li>
-        </ul>
-        <p class="future-note reveal">
-          AI-agent participation is a future direction and is not implemented in
-          v0.3.0.
-        </p>
-      </section>
-
-      <section class="section" id="capabilities" aria-labelledby="capabilities-title">
-        <div class="section-heading reveal">
-          <p class="eyebrow">Available in v0.3.0</p>
-          <h2 id="capabilities-title">Current capabilities</h2>
-          <p>
-            The current release establishes the event, definition, runtime, and
-            decision foundations of the platform.
-          </p>
-        </div>
-
-        <div class="card-grid capability-grid">
-          <article class="card reveal">
-            <span class="card-index">01</span>
-            <h3>Strongly Typed Events</h3>
-            <p>Typed event maps and payload contracts protect the event pipeline at compile time.</p>
-          </article>
-          <article class="card reveal">
-            <span class="card-index">02</span>
-            <h3>Concurrent EventBus</h3>
-            <p>Named subscribers run concurrently with isolated failures and ordered results.</p>
-          </article>
-          <article class="card reveal">
-            <span class="card-index">03</span>
-            <h3>Runtime Foundation</h3>
-            <p>Explicit publication results, subscriber results, stable identities, and duration metadata.</p>
-          </article>
-          <article class="card reveal">
-            <span class="card-index">04</span>
-            <h3>Workflow Definitions</h3>
-            <p>Immutable, versioned process graphs use dotted IDs and declarative operations.</p>
-          </article>
-          <article class="card reveal">
-            <span class="card-index">05</span>
-            <h3>Immutable Workflow Runtime</h3>
-            <p>Each transition returns a new WorkflowExecution snapshot instead of mutating runtime state.</p>
-          </article>
-          <article class="card reveal">
-            <span class="card-index">06</span>
-            <h3>Operation Registry</h3>
-            <p>Stable operation identifiers resolve to synchronous or asynchronous runtime handlers.</p>
-          </article>
-          <article class="card reveal">
-            <span class="card-index">07</span>
-            <h3>Decision Steps</h3>
-            <p>Decision nodes support multiple conditional transitions and one explicit default branch.</p>
-          </article>
-          <article class="card reveal">
-            <span class="card-index">08</span>
-            <h3>Declarative Conditions</h3>
-            <p>Serializable edge conditions use a deliberately small, deterministic expression language.</p>
-          </article>
-          <article class="card reveal">
-            <span class="card-index">09</span>
-            <h3>Deterministic Branch Selection</h3>
-            <p>All eligible conditions are evaluated; ambiguous and unmatched branches fail explicitly.</p>
-          </article>
-        </div>
-      </section>
-
-      <section class="section architecture-section" id="architecture" aria-labelledby="architecture-title">
-        <div class="section-heading reveal">
-          <p class="eyebrow">Architecture overview</p>
-          <h2 id="architecture-title">Separate event delivery from workflow control flow</h2>
-          <p>
-            Event publication and workflow execution cooperate through explicit
-            boundaries, but they do not share mutable state or control-flow ownership.
-          </p>
-        </div>
-
-        <div class="architecture-layout">
-          <article class="architecture-lane event-lane reveal">
-            <header>
-              <span class="lane-label">Input boundary</span>
-              <h3>Event Platform</h3>
-            </header>
-            <ol class="flow-list">
-              <li>HTTP / Event Input</li>
-              <li>Validation</li>
-              <li>Strongly Typed Events</li>
-              <li>Concurrent EventBus</li>
-            </ol>
-            <div class="boundary-statement">
-              <strong>Publication boundary</strong>
-              <p>EventBus publishes events to subscribers. It remains outside workflow control flow.</p>
+        <div class="hero-console reveal" aria-label="Current workflow platform stack">
+          <div class="console-bar"><span></span><span></span><span></span><code>workflow.execution</code></div>
+          <div class="console-body">
+            <p><span class="prompt">$</span> vep inspect platform</p>
+            <div class="console-tree">
+              <p><span>├─</span> Event Platform <b>stable</b></p>
+              <p><span>├─</span> Workflow Definition <b>immutable</b></p>
+              <p><span>├─</span> Decision Engine <b>deterministic</b></p>
+              <p><span>├─</span> Parallel Runtime <b>all-settled</b></p>
+              <p><span>├─</span> Persistence Boundary <b>canonical</b></p>
+              <p><span>└─</span> Recovery <b>exact-version</b></p>
             </div>
-          </article>
+            <p class="console-result">✓ architecture boundaries healthy</p>
+          </div>
+          <div class="snapshot-stack" aria-hidden="true">
+            <span>revision 7</span><span>revision 8</span><span>revision 9 · persisted</span>
+          </div>
+        </div>
+      </section>
 
-          <article class="architecture-lane workflow-lane reveal">
-            <header>
-              <span class="lane-label">Control-flow boundary</span>
-              <h3>Workflow Platform</h3>
-            </header>
-            <div class="workflow-diagram" aria-label="Workflow control-flow architecture">
-              <div class="diagram-source">Workflow Definition</div>
-              <div class="diagram-source">Operation Registry</div>
-              <div class="diagram-source">Condition Evaluator</div>
-              <div class="diagram-connector" aria-hidden="true">↓</div>
-              <div class="diagram-runner">Workflow Runner</div>
-              <div class="diagram-connector" aria-hidden="true">↓</div>
-              <div class="diagram-output">Immutable WorkflowExecution</div>
+      <section class="proof-strip" aria-label="Engineering principles">
+        <div class="shell proof-list">
+          <span>Strongly typed</span><span>Immutable snapshots</span><span>Canonical JSON</span><span>Optimistic concurrency</span><span>Architecture-first</span>
+        </div>
+      </section>
+
+      <section class="section shell" id="capabilities" aria-labelledby="capabilities-title">
+        <div class="section-heading reveal">
+          <p class="kicker">Platform capabilities</p>
+          <h2 id="capabilities-title">Infrastructure you can reason about.</h2>
+          <p>Every delivered capability has an explicit owner, deterministic behavior, and automated verification. Planned features remain clearly separated from current functionality.</p>
+        </div>
+        <div class="capability-grid">
+          <article class="capability reveal"><span class="cap-index">01</span><h3>Typed event platform</h3><p>Validated event intake, typed events, concurrent EventBus publication, stable subscriber identities, and isolated results.</p></article>
+          <article class="capability reveal"><span class="cap-index">02</span><h3>Declarative definitions</h3><p>Immutable versioned workflow graphs, dotted IDs, declarative operation identifiers, and dedicated validation.</p></article>
+          <article class="capability reveal"><span class="cap-index">03</span><h3>Deterministic runtime</h3><p>One incremental <code>advance()</code> contract produces immutable execution snapshots across linear and decision flows.</p></article>
+          <article class="capability reveal"><span class="cap-index">04</span><h3>Structured parallelism</h3><p>Fork/join regions, stable branch IDs, concurrent all-settled rounds, and canonical history aggregation.</p></article>
+          <article class="capability reveal"><span class="cap-index">05</span><h3>Persistence boundary</h3><p>Canonical JSON snapshots, optimistic revisions, duplicate-write protection, explicit save points, and an in-memory reference repository.</p></article>
+          <article class="capability reveal"><span class="cap-index">06</span><h3>Exact recovery</h3><p>Resume orchestration from the latest persisted snapshot using the exact immutable workflow definition ID and version.</p></article>
+        </div>
+      </section>
+
+      <section class="section section-tinted" id="architecture" aria-labelledby="architecture-title">
+        <div class="shell">
+          <div class="section-heading reveal">
+            <p class="kicker">Architecture</p>
+            <h2 id="architecture-title">Two systems. One explicit boundary.</h2>
+            <p>Event publication and workflow control flow cooperate without sharing mutable state or ownership.</p>
+          </div>
+          <div class="architecture-board reveal">
+            <div class="arch-lane event-lane">
+              <header><span>Publication plane</span><h3>Event Platform</h3></header>
+              <ol class="node-flow">
+                <li><small>Input</small><strong>HTTP / Event Input</strong></li>
+                <li><small>Contract</small><strong>Schema Validation</strong></li>
+                <li><small>Dispatch</small><strong>Concurrent EventBus</strong></li>
+                <li><small>Consumers</small><strong>Named Subscribers</strong></li>
+              </ol>
             </div>
-          </article>
-        </div>
-
-        <aside class="boundary-grid reveal" aria-labelledby="boundary-title">
-          <h3 id="boundary-title">EventBus boundary</h3>
-          <ul class="boundary-list">
-            <li><span class="status-dot status-yes" aria-hidden="true"></span>Publishes events</li>
-            <li><span class="status-dot status-no" aria-hidden="true"></span>Does not advance workflow steps</li>
-            <li><span class="status-dot status-no" aria-hidden="true"></span>Does not evaluate conditions</li>
-            <li><span class="status-dot status-no" aria-hidden="true"></span>Does not select branches</li>
-            <li><span class="status-dot status-no" aria-hidden="true"></span>Does not store WorkflowExecution state</li>
-          </ul>
-          <a
-            class="text-link"
-            href="https://github.com/JoyQuadraSync/VEP-Studio/blob/main/ARCHITECTURE.md"
-            rel="noreferrer"
-          >Read the architecture document <span aria-hidden="true">→</span></a>
-        </aside>
-      </section>
-
-      <section class="section metrics-section" aria-labelledby="metrics-title">
-        <div class="section-heading reveal">
-          <p class="eyebrow">Engineering evidence</p>
-          <h2 id="metrics-title">Measured by shipped foundations</h2>
-        </div>
-        <dl class="metrics-grid reveal">
-          <div>
-            <dt>Completed sprints</dt>
-            <dd>9</dd>
+            <div class="boundary-column" aria-label="Architecture boundary">
+              <span>separate systems</span><i aria-hidden="true">⇢</i><b>BOUNDARY</b><i aria-hidden="true">⇠</i><span>no shared state</span>
+            </div>
+            <div class="arch-lane workflow-lane">
+              <header><span>Control plane</span><h3>Workflow Platform</h3></header>
+              <div class="workflow-core">
+                <div><small>Structure</small><strong>WorkflowDefinition</strong></div>
+                <div><small>Control flow</small><strong>WorkflowRunner</strong></div>
+                <div><small>State</small><strong>WorkflowExecution</strong></div>
+                <div><small>Application</small><strong>Coordinator</strong></div>
+              </div>
+              <div class="support-row"><span>Operation Registry</span><span>Condition Evaluator</span><span>Repository</span></div>
+            </div>
           </div>
-          <div>
-            <dt>Automated tests</dt>
-            <dd>32</dd>
-          </div>
-          <div>
-            <dt>Sprint tags</dt>
-            <dd>001–009</dd>
-          </div>
-          <div>
-            <dt>Product release</dt>
-            <dd>v0.3.0</dd>
-          </div>
-          <div>
-            <dt>Accepted ADRs</dt>
-            <dd>5</dd>
-          </div>
-        </dl>
-        <div class="delivery-model reveal" aria-label="Architecture-first delivery model">
-          <span>RFC</span><span aria-hidden="true">→</span>
-          <span>Review</span><span aria-hidden="true">→</span>
-          <span>Freeze</span><span aria-hidden="true">→</span>
-          <span>Implementation</span><span aria-hidden="true">→</span>
-          <span>Tests</span><span aria-hidden="true">→</span>
-          <span>Release</span>
+          <aside class="boundary-note reveal"><strong>Frozen boundary</strong><p>EventBus publishes events. It does not advance workflow steps, evaluate conditions, select branches, coordinate parallel regions, or store execution state.</p></aside>
         </div>
       </section>
 
-      <section class="section" id="milestones" aria-labelledby="milestones-title">
-        <div class="section-heading reveal">
-          <p class="eyebrow">Release evolution</p>
-          <h2 id="milestones-title">Foundations delivered incrementally</h2>
-          <p>Each completed milestone establishes a boundary used by the next.</p>
+      <section class="section shell" id="runtime" aria-labelledby="runtime-title">
+        <div class="split-heading reveal">
+          <div><p class="kicker">Runtime flow</p><h2 id="runtime-title">One transition at a time.</h2></div>
+          <p><code>WorkflowRunner.advance()</code> is the single progression primitive. Each call returns one new snapshot and never mutates its input.</p>
         </div>
-        <ol class="milestone-list">
-          <li class="reveal">
-            <span class="milestone-marker" aria-hidden="true">01</span>
-            <div><h3>Event Platform</h3><p>Typed events, validation, concurrent publication, and subscriber isolation.</p></div>
-            <span class="status-label status-complete">Completed</span>
-          </li>
-          <li class="reveal">
-            <span class="milestone-marker" aria-hidden="true">02</span>
-            <div><h3>Runtime Foundation</h3><p>Stable identities, structured results, and deterministic duration contracts.</p></div>
-            <span class="status-label status-complete">Completed</span>
-          </li>
-          <li class="reveal">
-            <span class="milestone-marker" aria-hidden="true">03</span>
-            <div><h3>Workflow Definition</h3><p>Immutable versioned graphs, independent validation, and registry lookup.</p></div>
-            <span class="status-label status-complete">Completed</span>
-          </li>
-          <li class="reveal">
-            <span class="milestone-marker" aria-hidden="true">04</span>
-            <div><h3>Workflow Runtime</h3><p>Operation resolution and immutable WorkflowExecution snapshots.</p></div>
-            <span class="status-label status-complete">Completed</span>
-          </li>
-          <li class="reveal">
-            <span class="milestone-marker" aria-hidden="true">05</span>
-            <div><h3>Decision &amp; Conditional Workflow</h3><p>Pure condition evaluation, explicit defaults, and deterministic branch failures.</p></div>
-            <span class="status-label status-complete">Completed</span>
-          </li>
+        <div class="runtime-flow reveal" role="img" aria-label="Workflow runtime transition flow">
+          <div class="flow-node source"><span>INPUT</span><strong>Immutable snapshot</strong><small>+ exact definition</small></div>
+          <div class="flow-arrow" aria-hidden="true">→</div>
+          <div class="flow-node primary"><span>CONTROL FLOW</span><strong>advance()</strong><small>one architecture transition</small></div>
+          <div class="flow-arrow" aria-hidden="true">→</div>
+          <div class="flow-node output"><span>OUTPUT</span><strong>New snapshot</strong><small>created · running · terminal</small></div>
+        </div>
+        <div class="transition-grid">
+          <article><span>01</span><h3>Linear</h3><p>Complete one start, action, or finish step.</p></article>
+          <article><span>02</span><h3>Decision</h3><p>Evaluate every condition and select exactly one branch.</p></article>
+          <article><span>03</span><h3>Fork</h3><p>Create an ordered active parallel region without running handlers.</p></article>
+          <article><span>04</span><h3>Parallel round</h3><p>Advance each incomplete branch at most once using all-settled semantics.</p></article>
+          <article><span>05</span><h3>Join barrier</h3><p>Aggregate, retain, flatten history, and complete or fail atomically.</p></article>
+        </div>
+      </section>
+
+      <section class="section section-tinted" id="persistence" aria-labelledby="persistence-title">
+        <div class="shell">
+          <div class="split-heading reveal">
+            <div><p class="kicker">Persistence & recovery</p><h2 id="persistence-title">A durable orchestration boundary, without runtime coupling.</h2></div>
+            <p>Coordinator owns save-point timing. Runner stays storage-free. The in-memory reference repository stores canonical records and rejects stale writes; a process-durable database adapter is planned.</p>
+          </div>
+          <div class="persistence-layout">
+            <div class="sequence-panel reveal">
+              <div class="sequence-title"><span>Persistence-ready start</span><code>revision 1 → n</code></div>
+              <ol class="sequence-list">
+                <li><b>01</b><div><strong>Create execution</strong><span>Immutable identity and input</span></div></li>
+                <li><b>02</b><div><strong>Canonical serialize</strong><span>JSON-safe, deterministic bytes</span></div></li>
+                <li><b>03</b><div><strong>Persist revision 1</strong><span>Before any handler executes</span></div></li>
+                <li><b>04</b><div><strong>Advance and save</strong><span>Expected revision + stable writeId</span></div></li>
+                <li><b>05</b><div><strong>Return terminal record</strong><span>Only after persisted completion or failure</span></div></li>
+              </ol>
+            </div>
+            <div class="recovery-panel reveal">
+              <div class="recovery-ring"><span>RESUME</span><strong>Exact state.<br>Exact version.</strong></div>
+              <ul>
+                <li><span>Load</span> latest accepted record</li>
+                <li><span>Resolve</span> exact workflow ID + version</li>
+                <li><span>Validate</span> envelope, history, parallel ownership</li>
+                <li><span>Continue</span> incomplete work only</li>
+              </ul>
+              <p class="warning"><strong>At-least-once:</strong> a handler may run again if its result was not durably saved. Handlers should be idempotent.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section shell" id="roadmap" aria-labelledby="roadmap-title">
+        <div class="section-heading reveal">
+          <p class="kicker">Roadmap</p>
+          <h2 id="roadmap-title">The platform, milestone by milestone.</h2>
+          <p>Delivered foundations are separated from planned capabilities. Sprint 012 is the current architecture milestone.</p>
+        </div>
+        <ol class="timeline roadmap-timeline">
+          <li class="done"><span class="timeline-dot"></span><div><small>Sprint 007</small><h3>Workflow Definition</h3><p>Immutable, versioned workflow graphs.</p></div></li>
+          <li class="done"><span class="timeline-dot"></span><div><small>Sprint 008</small><h3>Workflow Runtime</h3><p>Immutable execution snapshots.</p></div></li>
+          <li class="done"><span class="timeline-dot"></span><div><small>Sprint 009</small><h3>Decision Workflow</h3><p>Declarative deterministic conditions.</p></div></li>
+          <li class="done"><span class="timeline-dot"></span><div><small>Sprint 010</small><h3>Parallel Workflow</h3><p>Structured all-settled fork/join.</p></div></li>
+          <li class="done"><span class="timeline-dot"></span><div><small>Sprint 011</small><h3>Persistence & Recovery</h3><p>Persistence contracts, in-memory repository, and exact-version recovery orchestration.</p></div></li>
+          <li class="current"><span class="timeline-dot"></span><div><small>Current · Sprint 012</small><h3>Retry / Timeout / Dead Letter</h3><p>Planned—not yet implemented.</p></div></li>
+          <li class="planned"><span class="timeline-dot"></span><div><small>Sprints 013–015</small><h3>Human Tasks → AI Agents → Visual Designer</h3><p>Future platform milestones.</p></div></li>
         </ol>
       </section>
 
-      <section class="section roadmap-section" id="roadmap" aria-labelledby="roadmap-title">
-        <div class="section-heading reveal">
-          <p class="eyebrow">Planned — not yet implemented</p>
-          <h2 id="roadmap-title">Roadmap</h2>
-          <p>
-            Future capabilities require their own RFC, architecture review, and
-            frozen runtime contracts before implementation.
-          </p>
-        </div>
-        <div class="roadmap-grid">
-          <article class="roadmap-card roadmap-current reveal">
-            <span class="status-label status-next">Next · Sprint 010</span>
-            <h3>Parallel Workflow</h3>
-            <p>Planned. Coordinated branches and join behavior are not yet implemented.</p>
-          </article>
-          <article class="roadmap-card reveal">
-            <span class="status-label status-planned">Planned · Sprint 011</span>
-            <h3>Persistence &amp; Recovery</h3>
-            <p>Durable execution state and recovery are not yet implemented.</p>
-          </article>
-          <article class="roadmap-card reveal">
-            <span class="status-label status-planned">Planned · Sprint 012</span>
-            <h3>Retry / Timeout / Dead Letter</h3>
-            <p>Runtime reliability policies are not yet implemented.</p>
-          </article>
-          <article class="roadmap-card reveal">
-            <span class="status-label status-planned">Planned · Sprint 013</span>
-            <h3>Human Tasks</h3>
-            <p>Waiting, review, and approval steps are not yet implemented.</p>
-          </article>
-          <article class="roadmap-card reveal">
-            <span class="status-label status-planned">Planned · Sprint 014</span>
-            <h3>AI Agent Runtime</h3>
-            <p>Governed AI-agent participation is not yet implemented.</p>
-          </article>
-          <article class="roadmap-card reveal">
-            <span class="status-label status-planned">Planned · Sprint 015</span>
-            <h3>Visual Workflow Designer</h3>
-            <p>Visual authoring and workflow inspection are not yet implemented.</p>
-          </article>
+      <section class="section section-tinted" id="releases" aria-labelledby="releases-title">
+        <div class="shell">
+          <div class="split-heading reveal">
+            <div><p class="kicker">Release timeline</p><h2 id="releases-title">A traceable engineering history.</h2></div>
+            <p>Sprint tags mark engineering iterations. Semantic versions mark curated product milestones.</p>
+          </div>
+          <div class="release-track reveal">
+            <article><small>Sprints 001–005</small><h3>Event Platform</h3><span>typed events · concurrent bus</span></article>
+            <article><small>Sprints 006–008</small><h3>Runtime Foundation</h3><span>definition · runtime · operations</span></article>
+            <article class="semantic"><small>v0.3.0 · Sprint 009</small><h3>Decision Workflow</h3><span>semantic product release</span></article>
+            <article><small>Sprint 010</small><h3>Parallel Workflow</h3><span>structured fork / join</span></article>
+            <article><small>Sprint 011</small><h3>Persistence & Recovery</h3><span>latest engineering release</span></article>
+          </div>
+          <div class="release-actions reveal">
+            <a class="button button-primary" href="https://github.com/JoyQuadraSync/VEP-Studio/releases/tag/v0.3.0">View v0.3.0 release</a>
+            <a class="button" href="https://github.com/JoyQuadraSync/VEP-Studio/blob/main/CHANGELOG.md">Read the changelog</a>
+          </div>
         </div>
       </section>
 
-      <section class="section process-section" aria-labelledby="process-title">
-        <div class="section-heading reveal">
-          <p class="eyebrow">Architecture-first delivery</p>
-          <h2 id="process-title">A repeatable path from decision to release</h2>
-          <p>
-            VEP Studio evolves through bounded increments. Architecture is reviewed
-            and frozen before implementation, then verified before release.
-          </p>
+      <section class="section shell docs-section" aria-labelledby="docs-title">
+        <div class="section-heading reveal"><p class="kicker">Documentation</p><h2 id="docs-title">Follow the decisions, not just the code.</h2></div>
+        <div class="docs-grid">
+          <a href="https://github.com/JoyQuadraSync/VEP-Studio/blob/main/ARCHITECTURE.md"><span>01</span><h3>Architecture</h3><p>System boundaries and execution lifecycle.</p><b>Open →</b></a>
+          <a href="https://github.com/JoyQuadraSync/VEP-Studio/tree/main/docs/adr"><span>02</span><h3>ADRs</h3><p>Accepted decisions and rejected alternatives.</p><b>Open →</b></a>
+          <a href="https://github.com/JoyQuadraSync/VEP-Studio/blob/main/ROADMAP.md"><span>03</span><h3>Roadmap</h3><p>Delivered, current, and planned milestones.</p><b>Open →</b></a>
+          <a href="https://github.com/JoyQuadraSync/VEP-Studio/blob/main/PROJECT_STATUS.md"><span>04</span><h3>Project status</h3><p>Capability and architecture-health dashboard.</p><b>Open →</b></a>
         </div>
-        <ol class="process-list reveal">
-          <li><span>01</span>RFC</li>
-          <li><span>02</span>Architecture Review</li>
-          <li><span>03</span>Architecture Freeze</li>
-          <li><span>04</span>Implementation</li>
-          <li><span>05</span>Tests</li>
-          <li><span>06</span>Release</li>
-        </ol>
       </section>
     </main>
 
     <footer class="site-footer">
-      <div class="footer-inner">
-        <div>
-          <a class="brand footer-brand" href="#top">
-            <span class="brand-mark" aria-hidden="true">V</span>
-            <span>VEP Studio</span>
-          </a>
-          <p>v0.3.0 — Decision Workflow</p>
-        </div>
-        <nav class="footer-links" aria-label="Project documentation">
-          <a href="https://github.com/JoyQuadraSync/VEP-Studio" rel="noreferrer">Repository</a>
-          <a href="https://github.com/JoyQuadraSync/VEP-Studio/releases/tag/v0.3.0" rel="noreferrer">Release</a>
-          <a href="https://github.com/JoyQuadraSync/VEP-Studio/blob/main/ARCHITECTURE.md" rel="noreferrer">Architecture</a>
-          <a href="https://github.com/JoyQuadraSync/VEP-Studio/tree/main/docs/adr" rel="noreferrer">ADRs</a>
-          <a href="https://github.com/JoyQuadraSync/VEP-Studio/blob/main/ROADMAP.md" rel="noreferrer">Roadmap</a>
-          <a href="https://github.com/JoyQuadraSync/VEP-Studio/blob/main/CHANGELOG.md" rel="noreferrer">Changelog</a>
-        </nav>
+      <div class="shell footer-grid">
+        <div><a class="brand" href="#top"><span class="brand-mark" aria-hidden="true">V</span><span>VEP Studio</span></a><p>Deterministic workflow infrastructure, built in public.</p></div>
+        <div class="footer-links"><a href="https://github.com/JoyQuadraSync/VEP-Studio">Repository</a><a href="https://github.com/JoyQuadraSync/VEP-Studio/tree/main/docs/releases">Releases</a><a href="https://github.com/JoyQuadraSync/VEP-Studio/blob/main/ROADMAP.md">Roadmap</a></div>
       </div>
-      <p class="footer-meta">Built without dependencies, tracking, or external assets. <span data-current-year>2026</span>.</p>
+      <div class="shell footer-meta"><span>v0.3.0 · Persistent Workflow Platform</span><span>© <span data-current-year>2026</span> VEP Studio</span></div>
     </footer>
   </body>
 </html>
