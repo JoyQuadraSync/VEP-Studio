@@ -2,6 +2,35 @@
 
 All notable changes to VEP Studio will be documented in this file.
 
+## v0.3.0 — 2026-08-04
+
+### Added
+
+- decision workflow step
+- declarative `WorkflowCondition`
+- conditional workflow edges
+- explicit default edges
+- pure deterministic `ConditionEvaluator`
+- deterministic branch selection
+
+### Changed
+
+- `WorkflowRunner` now supports decision-step progression
+- `WorkflowValidator` now validates conditional definitions, references, edge roles, serialization, and configured nesting depth
+
+### Failure Semantics
+
+- `condition_evaluation_failed`
+- `multiple_matching_branches`
+- `no_matching_branch`
+- `invalid_default_branch`
+
+### Verification
+
+- `npm run typecheck` — passed
+- `npm run build` — passed
+- `npm test` — passed, 32/32
+
 ## Sprint 009 — 2026-08-04
 
 ### Added

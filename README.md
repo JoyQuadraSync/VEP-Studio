@@ -4,7 +4,7 @@ VEP Studio is an open-source, event-driven workflow platform under active develo
 
 The project is developed incrementally: each sprint delivers a small, runnable, and testable capability while preserving the contracts established by earlier releases.
 
-Current version: **v0.2.0**
+Current version: **v0.3.0**
 
 ## Vision
 
@@ -32,11 +32,16 @@ VEP Studio currently provides:
 - graph validation separated from definition registration
 - dotted workflow identifiers and immutable integer version keys
 - a linear in-memory workflow runtime
+- decision workflow steps with deterministic conditional branching
+- declarative conditional and default edges
+- a pure deterministic ConditionEvaluator
+- explicit structured branch failures
 - immutable workflow execution snapshots
 - declarative operation identifiers resolved through an operation registry
 - synchronous and asynchronous operation handlers
 - structured workflow failures without raw runtime causes
 - deterministic duration-based runtime testing
+- 32 automated tests covering events, definitions, runtime, and conditions
 
 ### Sprint History
 
@@ -50,6 +55,19 @@ VEP Studio currently provides:
 | 006 | Runtime foundation stabilization | Completed |
 | 007 | Workflow Definition System | Completed |
 | 008 | Workflow Runtime | Completed |
+| 009 | Decision & Conditional Workflow | Completed |
+
+## Release History
+
+### v0.3.0 — Decision & Conditional Workflow
+
+- Decision & Conditional Workflow milestone
+- Sprint 009 completed
+
+### v0.2.0 — Workflow Definition and Workflow Runtime
+
+- Workflow Definition and Workflow Runtime foundations
+- Sprint 001–008 completed
 
 ## Architecture Overview
 
@@ -71,7 +89,7 @@ HTTP / External Inputs
  Operation Handlers
 ```
 
-At v0.2.0, the event and workflow layers are intentionally decoupled:
+At v0.3.0, the event and workflow layers are intentionally decoupled:
 
 ```text
 Event Platform                     Workflow Platform
@@ -165,7 +183,7 @@ The test suite covers EventBus behavior, Workflow Definition contracts, graph va
 ## Documentation
 
 - [Architecture](ARCHITECTURE.md) describes the current component boundaries and execution lifecycle.
-- [Project Status](PROJECT_STATUS.md) provides a v0.2.0 capability and health dashboard.
+- [Project Status](PROJECT_STATUS.md) provides a v0.3.0 capability and health dashboard.
 - [Roadmap](ROADMAP.md) tracks completed, current, and future milestones.
 - [Changelog](CHANGELOG.md) records delivered capabilities by release.
 - [Architecture Decision Records](docs/adr/) explain important design choices and their consequences.
@@ -174,9 +192,9 @@ The test suite covers EventBus behavior, Workflow Definition contracts, graph va
 
 ## Version
 
-The current project version is **v0.2.0**.
+The current project version is **v0.3.0**.
 
-Version 0.2.0 represents the completion of the foundational event platform, workflow definition model, and first linear workflow runtime.
+Version 0.3.0 represents the completion of the strongly typed Event Platform, Workflow Definition System, immutable Workflow Runtime, and deterministic Decision & Conditional Workflow milestone.
 
 ## Next Milestones
 

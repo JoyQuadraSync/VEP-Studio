@@ -2,9 +2,13 @@
 
 ## Current Version
 
-**v0.2.0**
+**v0.3.0**
 
-Version 0.2.0 establishes the typed event platform, declarative workflow model, and first deterministic workflow runtime.
+Version 0.3.0 establishes VEP Studio as a Decision Workflow Platform with a typed event foundation, declarative workflow definitions, immutable runtime snapshots, and deterministic conditional branching.
+
+## Current Stage
+
+**Decision Workflow Platform**
 
 ## Release Dashboard
 
@@ -18,7 +22,8 @@ Version 0.2.0 establishes the typed event platform, declarative workflow model, 
 | Workflow Registry | Complete |
 | Linear Workflow Runtime | Complete |
 | Operation Registry | Complete |
-| Decision Workflows | Next milestone |
+| Decision & Conditional Workflow | Complete |
+| Parallel Workflow | Next milestone |
 | Persistence and Recovery | Planned |
 | Human Tasks | Planned |
 | AI Agent Runtime | Planned |
@@ -36,6 +41,7 @@ Version 0.2.0 establishes the typed event platform, declarative workflow model, 
 | Sprint 006 | Runtime Foundation Stabilization | Completed |
 | Sprint 007 | Workflow Definition System | Completed |
 | Sprint 008 | Workflow Runtime | Completed |
+| Sprint 009 | Decision & Conditional Workflow | Completed |
 
 ## Current Capabilities
 
@@ -49,6 +55,10 @@ Version 0.2.0 establishes the typed event platform, declarative workflow model, 
 - register and retrieve workflow definitions by version
 - resolve declarative operation identifiers
 - execute linear workflows in memory
+- execute deterministic decision and conditional workflows
+- define declarative conditional and default edges
+- evaluate restricted snapshot conditions through a pure ConditionEvaluator
+- fail ambiguous, unmatched, invalid-default, and evaluation branches explicitly
 - support synchronous and asynchronous operation handlers
 - preserve immutable workflow execution snapshots
 - chain step input and output
@@ -94,6 +104,18 @@ Version 0.2.0 establishes the typed event platform, declarative workflow model, 
 - `OperationRegistry`
 - `WorkflowRunner`
 
+### Decision & Conditional Workflow
+
+- `WorkflowDecisionStep`
+- `WorkflowCondition`
+- `ConditionReference`
+- conditional workflow edges
+- default workflow edges
+- `ConditionEvaluationInput`
+- `ConditionEvaluator`
+- deterministic branch selection
+- structured conditional failure codes
+
 ## Architecture Health
 
 | Principle | Health | Evidence |
@@ -103,7 +125,7 @@ Version 0.2.0 establishes the typed event platform, declarative workflow model, 
 | Determinism | Healthy | Injected clock and execution ID generation support controlled tests |
 | Immutability | Healthy | Definitions and execution transitions use readonly contracts and immutable snapshots |
 | Failure isolation | Healthy | Event subscribers and workflow operations produce isolated structured results |
-| Test coverage | Healthy | Event, definition, validator, registry, and runtime behavior have automated coverage |
+| Test coverage | Healthy | 32 tests cover events, definitions, validation, runtime, and conditional branching |
 | Runtime coupling | Healthy | EventBus is outside workflow control flow; ExecutionContext remains event-specific |
 | Production readiness | Developing | Persistence, recovery, security, observability, and deployment remain future work |
 
@@ -119,9 +141,7 @@ Version 0.2.0 establishes the typed event platform, declarative workflow model, 
 ## Known Limitations
 
 - workflow execution is in memory only
-- only linear workflows are executable
-- conditions and decision steps are not supported
-- parallel branches are not supported
+- parallel workflows are not supported
 - executions cannot be persisted, paused, recovered, cancelled, or resumed
 - retry, timeout, and dead-letter policies are not implemented
 - human tasks and AI agents are not implemented
@@ -132,8 +152,8 @@ Version 0.2.0 establishes the typed event platform, declarative workflow model, 
 
 ## Next Milestone
 
-**Sprint 009 — Decision & Conditional Workflow**
+**Sprint 010 — Parallel Workflow**
 
-The next milestone will expand workflow expressiveness beyond linear progression while preserving immutable definitions, immutable execution snapshots, deterministic runtime behavior, and the existing EventBus boundary.
+The next milestone will expand workflow execution to coordinated parallel branches while preserving immutable definitions, immutable execution snapshots, deterministic runtime behavior, and the existing EventBus boundary.
 
 See [ROADMAP.md](ROADMAP.md) for subsequent milestones.

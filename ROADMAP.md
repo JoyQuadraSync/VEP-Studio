@@ -6,9 +6,9 @@ VEP Studio is evolving into an event-driven workflow platform for connecting bus
 
 ## Current Version
 
-**v0.2.0**
+**v0.3.0**
 
-The current release includes the event platform foundation, declarative workflow definitions, graph validation, versioned registries, and the first linear workflow runtime.
+The current release includes the event platform foundation, declarative workflow definitions, immutable workflow runtime, and deterministic decision and conditional workflows.
 
 ## Completed Sprints
 
