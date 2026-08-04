@@ -8,7 +8,7 @@ VEP Studio is evolving into an event-driven workflow platform for connecting bus
 
 **v0.3.0**
 
-The semantic product release remains v0.3.0. Current development has completed structured Parallel Workflow and is moving to Persistence & Recovery.
+The semantic product release remains v0.3.0. Current development has completed Persistence & Recovery and is moving to runtime reliability policies.
 
 ## Completed Sprints
 
@@ -24,18 +24,15 @@ The semantic product release remains v0.3.0. Current development has completed s
 | Sprint 008 | Workflow Runtime | Completed |
 | Sprint 009 | Decision & Conditional Workflow | Completed |
 | Sprint 010 | Parallel Workflow | Completed |
+| Sprint 011 | Persistence & Recovery | Completed |
 
 ## Current Sprint
 
-### Sprint 011 — Persistence & Recovery
-
-Establish durable workflow state and execution recovery capabilities.
-
-## Planned Sprints
-
 ### Sprint 012 — Retry / Timeout / Dead Letter
 
-Introduce runtime reliability policies after durable execution boundaries exist.
+Introduce runtime reliability policies on top of durable execution and recovery boundaries.
+
+## Planned Sprints
 
 ### Sprint 013 — Human Tasks
 

@@ -2,6 +2,54 @@
 
 All notable changes to VEP Studio will be documented in this file.
 
+## Sprint 011 — 2026-08-04
+
+### Added
+
+- `WorkflowRunner.advance()` incremental progression
+- `WorkflowExecutionCoordinator` durable application boundary
+- execution repository contracts and in-memory reference implementation
+- deterministic canonical JSON workflow-execution serialization
+- execution recovery validation and exact definition-version resolution
+- write-ID generation and typed persistence errors
+- durable initial, transition, parallel-round, join-barrier, and terminal save points
+- durable resume for linear, decision, and active parallel workflows
+
+### Concurrency and Recovery
+
+- repository creation starts at revision 1
+- optimistic expected-revision saves prevent stale overwrite
+- per-execution write-ID retention protects duplicate and ambiguous writes
+- `activeParallel` and completed or failed `parallelRegions` round-trip
+- completed steps and branches are not re-executed during resume
+- exact workflow ID and immutable integer version are mandatory
+
+### Architecture
+
+- WorkflowRunner owns control flow only
+- WorkflowExecutionCoordinator owns save-point timing
+- WorkflowExecutionRepository is limited to create, find, and save
+- persistence and recovery failures remain separate from `WorkflowFailure`
+- EventBus is not persistence transport
+- OperationRegistry, ConditionEvaluator, and ExecutionContext remain unchanged
+- handler execution is at least once and handlers should be idempotent
+
+### Verification
+
+- `npm run typecheck` — passed
+- `npm run build` — passed
+- `npm test` — passed, 69/69
+- existing Sprint 007–010 tests — passed, 50/50
+- Sprint 011 tests — passed, 19/19
+- `git diff --check` — passed
+
+### Deferred
+
+- database adapters, schema migration, event sourcing, and historical revision queries
+- retry, timeout, cancellation, scheduling, queues, and distributed workers
+- exactly-once execution, transactional outbox, compensation, and distributed transactions
+- human tasks, AI agents, tracing, metrics, and HTTP workflow management
+
 ## Sprint 010 — 2026-08-04
 
 ### Added

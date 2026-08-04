@@ -4,18 +4,18 @@
 
 **v0.3.0**
 
-The semantic product version remains v0.3.0. Current development extends that foundation with structured deterministic parallel workflow execution.
+The semantic product version remains v0.3.0. Current development adds durable immutable execution persistence, recovery, and resumable progression.
 
 ## Current Stage
 
-**Parallel Workflow Platform**
+**Persistent Workflow Platform**
 
 ## Release Dashboard
 
 | Area | Status |
 |---|---|
-| Completed Sprints | 10 |
-| Automated Tests | 50 passing |
+| Completed Sprints | 11 |
+| Automated Tests | 69 passing |
 | Event Platform | Stable foundation |
 | Strongly Typed Events | Complete |
 | Runtime Contracts | Complete |
@@ -26,7 +26,8 @@ The semantic product version remains v0.3.0. Current development extends that fo
 | Operation Registry | Complete |
 | Decision & Conditional Workflow | Complete |
 | Parallel Workflow | Complete |
-| Persistence and Recovery | Next milestone |
+| Persistence and Recovery | Complete |
+| Retry / Timeout / Dead Letter | Next milestone |
 | Human Tasks | Planned |
 | AI Agent Runtime | Planned |
 | Visual Workflow Designer | Planned |
@@ -45,6 +46,7 @@ The semantic product version remains v0.3.0. Current development extends that fo
 | Sprint 008 | Workflow Runtime | Completed |
 | Sprint 009 | Decision & Conditional Workflow | Completed |
 | Sprint 010 | Parallel Workflow | Completed |
+| Sprint 011 | Persistence & Recovery | Completed |
 
 ## Current Capabilities
 
@@ -72,6 +74,13 @@ The semantic product version remains v0.3.0. Current development extends that fo
 - flatten parent history deterministically at the join barrier
 - preserve branch-local history and condition isolation
 - support zero-action branches and multiple sequential parallel regions
+- advance workflows through one immutable transition at a time
+- persist canonical immutable execution snapshots at durable save points
+- protect saves through optimistic revisions and stable write IDs
+- resume linear, decision, and active parallel executions deterministically
+- recover exact immutable workflow definition versions
+- retain completed and failed parallel regions across serialization
+- separate typed persistence failures from workflow failures
 
 ## Completed Components
 
@@ -136,6 +145,19 @@ The semantic product version remains v0.3.0. Current development extends that fo
 - deterministic branch ordering and aggregation
 - all-settled barrier and join-located failure
 
+### Persistence & Recovery
+
+- `WorkflowRunner.advance()`
+- `WorkflowExecutionCoordinator`
+- `WorkflowExecutionRepository`
+- `InMemoryWorkflowExecutionRepository`
+- `WorkflowExecutionSerializer`
+- canonical JSON serialization
+- `WorkflowExecutionRecoveryValidator`
+- `WorkflowDefinitionResolver`
+- optimistic revision and write-ID protection
+- durable save points and resume
+
 ## Architecture Health
 
 | Principle | Health | Evidence |
@@ -145,25 +167,26 @@ The semantic product version remains v0.3.0. Current development extends that fo
 | Determinism | Healthy | Injected clock and execution ID generation support controlled tests |
 | Immutability | Healthy | Definitions and execution transitions use readonly contracts and immutable snapshots |
 | Failure isolation | Healthy | Event subscribers and workflow operations produce isolated structured results |
-| Test coverage | Healthy | 50 tests cover events, definitions, validation, linear, decision, and parallel runtime behavior |
+| Test coverage | Healthy | 69 tests cover events, definitions, validation, runtime, decisions, parallel execution, persistence, and recovery |
 | Runtime coupling | Healthy | EventBus is outside workflow control flow; ExecutionContext remains event-specific |
-| Production readiness | Developing | Persistence, recovery, security, observability, and deployment remain future work |
+| Production readiness | Developing | A reference persistence boundary exists; durable database adapters, security, and observability remain future work |
 
 ## Technical Debt
 
 - workflow input and output use generic `unknown` runtime contracts
 - immutable snapshots do not deep-freeze nested input or output values
 - duration calculation uses a wall-clock time source rather than a monotonic clock
-- definition validation and execution are not yet composed into one application service
+- the reference repository is in-memory and not durable across process termination
+- operation handlers use at-least-once semantics and should be idempotent
 - some early release and architecture-review documents remain sparse
 - project licensing and contributor governance are not yet defined
 
 ## Known Limitations
 
-- workflow execution is in memory only
+- no durable database adapter has been selected or implemented
 - nested and overlapping parallel workflows are not supported
 - branch cancellation and custom join aggregation are not supported
-- executions cannot be persisted, paused, recovered, cancelled, or resumed
+- cancellation, pausing, and scheduling are not implemented
 - retry, timeout, and dead-letter policies are not implemented
 - human tasks and AI agents are not implemented
 - no visual workflow designer exists
@@ -173,8 +196,8 @@ The semantic product version remains v0.3.0. Current development extends that fo
 
 ## Next Milestone
 
-**Sprint 011 — Persistence & Recovery**
+**Sprint 012 — Retry / Timeout / Dead Letter**
 
-The next milestone will define durable storage and recovery for immutable workflow execution snapshots while preserving deterministic runtime behavior and existing architecture boundaries.
+The next milestone will define retry, timeout, and dead-letter policies on top of durable execution and recovery boundaries.
 
 See [ROADMAP.md](ROADMAP.md) for subsequent milestones.

@@ -22,7 +22,6 @@ import {
   ParallelBranchResult,
   WorkflowBranchExecution,
   WorkflowFailedParallelRegionResult,
-  WorkflowParallelExecution,
   WorkflowParallelRegionResult
 } from './workflow-parallel-execution';
 import { WorkflowState, WorkflowStepResultStatus } from './workflow-state';
@@ -32,20 +31,9 @@ type NextStepResult =
   | { readonly stepId: string; readonly failure?: undefined }
   | { readonly stepId?: undefined; readonly failure: WorkflowFailure };
 
-type ParallelRegionExecutionResult =
-  | {
-      readonly execution: WorkflowExecution;
-      readonly output: readonly ParallelBranchResult[];
-      readonly failure?: undefined;
-    }
-  | {
-      readonly execution: WorkflowExecution;
-      readonly output?: undefined;
-      readonly failure: WorkflowFailure;
-    };
-
 export interface WorkflowRunner {
   createExecution(definition: WorkflowDefinition, workflowInput: unknown): WorkflowExecution;
+  advance(definition: WorkflowDefinition, execution: WorkflowExecution): Promise<WorkflowExecution>;
   run(definition: WorkflowDefinition, execution: WorkflowExecution): Promise<WorkflowExecution>;
 }
 
@@ -75,140 +63,120 @@ export class InMemoryWorkflowRunner implements WorkflowRunner {
     definition: WorkflowDefinition,
     execution: WorkflowExecution
   ): Promise<WorkflowExecution> {
-    this.assertExecutionContract(definition, execution);
-
-    const executionStartedAt = this.clock.now();
-    let currentValue = execution.workflowInput;
-    let currentExecution: WorkflowExecution = {
-      ...execution,
-      state: WorkflowState.RUNNING,
-      completedSteps: [...execution.completedSteps],
-      stepResults: [...execution.stepResults],
-      parallelRegions: [...execution.parallelRegions]
-    };
-
-    while (currentExecution.state === WorkflowState.RUNNING) {
-      const step = this.findStep(definition, currentExecution.currentStepId);
-
-      if (!step) {
-        return this.failExecution(
-          currentExecution,
-          {
-            code: 'invalid_step',
-            message: 'Workflow references a step that does not exist.',
-            stepId: currentExecution.currentStepId
-          },
-          executionStartedAt
-        );
-      }
-
-      if (currentExecution.completedSteps.includes(step.id)) {
-        return this.failExecution(
-          currentExecution,
-          {
-            code: 'invalid_step',
-            message: 'Workflow attempted to execute a completed step again.',
-            stepId: step.id
-          },
-          executionStartedAt
-        );
-      }
-
-      const stepResult = await this.executeStep(step, currentValue, currentExecution);
-
-      if (stepResult.status === WorkflowStepResultStatus.FAILED) {
-        return this.failExecution(
-          {
-            ...currentExecution,
-            stepResults: [...currentExecution.stepResults, stepResult]
-          },
-          stepResult.failure,
-          executionStartedAt
-        );
-      }
-
-      currentValue = stepResult.output;
-      currentExecution = {
-        ...currentExecution,
-        completedSteps: [...currentExecution.completedSteps, step.id],
-        stepResults: [...currentExecution.stepResults, stepResult]
-      };
-
-      const stepKind = getWorkflowStepKind(step);
-
-      if (stepKind === 'finish') {
-        if (definition.edges.some((edge) => getWorkflowEdgeSource(edge) === step.id)) {
-          return this.failExecution(
-            currentExecution,
-            {
-              code: 'invalid_finish_step',
-              message: 'Finish step must not have outgoing edges.',
-              stepId: step.id
-            },
-            executionStartedAt
-          );
-        }
-
-        return {
-          ...currentExecution,
-          state: WorkflowState.COMPLETED,
-          workflowOutput: currentValue,
-          durationMs: this.durationMs(executionStartedAt, this.clock.now())
-        };
-      }
-
-      if (stepKind === 'fork') {
-        if (!('joinStepId' in step)) {
-          return this.failExecution(
-            currentExecution,
-            this.parallelJoinMismatch(step.id),
-            executionStartedAt
-          );
-        }
-
-        const parallelResult = await this.executeParallelRegion(
-          definition,
-          step,
-          currentValue,
-          currentExecution
-        );
-        currentExecution = parallelResult.execution;
-
-        if (parallelResult.failure) {
-          return this.failExecution(
-            currentExecution,
-            parallelResult.failure,
-            executionStartedAt
-          );
-        }
-
-        currentValue = parallelResult.output;
-        currentExecution = {
-          ...currentExecution,
-          currentStepId: step.joinStepId
-        };
-        continue;
-      }
-
-      const nextStep = this.resolveNextStep(
-        definition,
-        step,
-        currentExecution,
-        stepResult.input,
-        stepResult.output
-      );
-
-      if (nextStep.failure) {
-        return this.failExecution(currentExecution, nextStep.failure, executionStartedAt);
-      }
-
-      currentExecution = { ...currentExecution, currentStepId: nextStep.stepId };
+    if (definition.id !== execution.workflowId || definition.version !== execution.workflowVersion) {
+      throw new Error('Workflow definition does not match the execution identity.');
     }
 
-    return currentExecution;
+    if (execution.activeParallel) {
+      throw new Error('Workflow execution must not contain active parallel state before running.');
+    }
+
+    if (execution.state !== WorkflowState.CREATED) {
+      throw new Error('Workflow execution must be in the created state before running.');
+    }
+
+    const executionStartedAt = this.clock.now();
+    let currentExecution = execution;
+
+    do {
+      currentExecution = await this.advance(definition, currentExecution);
+    } while (
+      currentExecution.state !== WorkflowState.COMPLETED &&
+      currentExecution.state !== WorkflowState.FAILED
+    );
+
+    return {
+      ...currentExecution,
+      durationMs: this.durationMs(executionStartedAt, this.clock.now())
+    };
   }
 
-  private assertExecutionContract(
+  async advance(
+    definition: WorkflowDefinition,
+    execution: WorkflowExecution
+  ): Promise<WorkflowExecution> {
+    this.assertAdvanceContract(definition, execution);
+    const currentExecution: WorkflowExecution = execution.state === WorkflowState.CREATED
+      ? { ...execution, state: WorkflowState.RUNNING }
+      : this.cloneExecution(execution);
+
+    if (currentExecution.activeParallel) {
+      if (currentExecution.activeParallel.branches.every(
+        (branch) => branch.state === 'completed' || branch.state === 'failed'
+      )) {
+        return this.completeParallelJoin(definition, currentExecution);
+      }
+
+      return this.advanceParallelRound(definition, currentExecution);
+    }
+
+    const step = this.findStep(definition, currentExecution.currentStepId);
+
+    if (!step || currentExecution.completedSteps.includes(currentExecution.currentStepId)) {
+      return this.failExecution(currentExecution, {
+        code: 'invalid_step',
+        message: 'Workflow references an invalid or already completed step.',
+        stepId: currentExecution.currentStepId
+      });
+    }
+
+    const input = this.currentValue(currentExecution);
+    const stepKind = getWorkflowStepKind(step);
+    const stepResult = stepKind === 'action'
+      ? await this.executeStep(step, input, currentExecution)
+      : this.executePassThroughStep(step, input);
+
+    if (stepResult.status === WorkflowStepResultStatus.FAILED) {
+      return this.failExecution(
+        { ...currentExecution, stepResults: [...currentExecution.stepResults, stepResult] },
+        stepResult.failure
+      );
+    }
+
+    const progressed: WorkflowExecution = {
+      ...currentExecution,
+      completedSteps: [...currentExecution.completedSteps, step.id],
+      stepResults: [...currentExecution.stepResults, stepResult]
+    };
+    if (stepKind === 'finish') {
+      if (definition.edges.some((edge) => getWorkflowEdgeSource(edge) === step.id)) {
+        return this.failExecution(progressed, {
+          code: 'invalid_finish_step',
+          message: 'Finish step must not have outgoing edges.',
+          stepId: step.id
+        });
+      }
+
+      return {
+        ...progressed,
+        state: WorkflowState.COMPLETED,
+        workflowOutput: stepResult.output,
+        durationMs: this.aggregateDuration(progressed)
+      };
+    }
+
+    if (stepKind === 'fork') {
+      if (!('joinStepId' in step)) {
+        return this.failExecution(progressed, this.parallelJoinMismatch(step.id));
+      }
+
+      return this.createParallelExecution(definition, step, stepResult.output, progressed);
+    }
+
+    const nextStep = this.resolveNextStep(
+      definition,
+      step,
+      progressed,
+      stepResult.input,
+      stepResult.output
+    );
+
+    return nextStep.failure
+      ? this.failExecution(progressed, nextStep.failure)
+      : { ...progressed, currentStepId: nextStep.stepId };
+  }
+
+  private assertAdvanceContract(
     definition: WorkflowDefinition,
     execution: WorkflowExecution
   ): void {
@@ -219,22 +187,24 @@ export class InMemoryWorkflowRunner implements WorkflowRunner {
       throw new Error('Workflow definition does not match the execution identity.');
     }
 
-    if (execution.state !== WorkflowState.CREATED) {
-      throw new Error('Workflow execution must be in the created state before running.');
+    if (
+      execution.state !== WorkflowState.CREATED &&
+      execution.state !== WorkflowState.RUNNING
+    ) {
+      throw new Error('Terminal workflow executions cannot be advanced.');
     }
 
-    if (execution.activeParallel) {
-      throw new Error('Workflow execution must not contain active parallel state before running.');
+    if (execution.state === WorkflowState.CREATED && execution.activeParallel) {
+      throw new Error('Created workflow execution must not contain active parallel state.');
     }
   }
 
-  private async executeParallelRegion(
+  private createParallelExecution(
     definition: WorkflowDefinition,
     fork: WorkflowForkStep,
     input: unknown,
     execution: WorkflowExecution
-  ): Promise<ParallelRegionExecutionResult> {
-    const regionStartedAt = this.clock.now();
+  ): WorkflowExecution {
     const join = this.findStep(definition, fork.joinStepId);
     const forkOutgoingEdges = definition.edges.filter(
       (edge) => getWorkflowEdgeSource(edge) === fork.id
@@ -254,10 +224,7 @@ export class InMemoryWorkflowRunner implements WorkflowRunner {
       branchEdges.length < 2 ||
       !this.hasValidRuntimeBranchIds(branchEdges)
     ) {
-      return {
-        execution,
-        failure: this.parallelJoinMismatch(fork.joinStepId)
-      };
+      return this.failExecution(execution, this.parallelJoinMismatch(fork.joinStepId));
     }
 
     const pendingBranches: readonly WorkflowBranchExecution[] = branchEdges.map((edge) => ({
@@ -269,48 +236,55 @@ export class InMemoryWorkflowRunner implements WorkflowRunner {
       completedSteps: [],
       stepResults: []
     }));
-    const activeParallel: WorkflowParallelExecution = {
+    return {
+      ...execution,
+      activeParallel: {
       forkStepId: fork.id,
       joinStepId: fork.joinStepId,
       input,
       branches: pendingBranches
+      }
     };
-    let activeExecution: WorkflowExecution = { ...execution, activeParallel };
-    const runningBranches = pendingBranches.map((branch) => ({
-      ...branch,
-      state: 'running' as const,
-      completedSteps: [...branch.completedSteps],
-      stepResults: [...branch.stepResults]
-    }));
+  }
 
-    activeExecution = {
-      ...activeExecution,
-      activeParallel: { ...activeParallel, branches: runningBranches }
-    };
+  private async advanceParallelRound(
+    definition: WorkflowDefinition,
+    execution: WorkflowExecution
+  ): Promise<WorkflowExecution> {
+    const active = execution.activeParallel;
 
-    const settlements = await Promise.allSettled(
-      runningBranches.map((branch) =>
-        this.executeBranch(definition, fork.joinStepId, branch, activeExecution)
-      )
-    );
-    const branches = settlements
-      .map((settlement, index): WorkflowBranchExecution => {
-        if (settlement.status === 'fulfilled') {
-          return settlement.value;
-        }
+    if (!active) {
+      throw new Error('Parallel advancement requires active parallel state.');
+    }
 
-        const branch = runningBranches[index];
-        const { currentStepId: ignoredCurrentStepId, ...branchWithoutCurrentStep } = branch;
-        void ignoredCurrentStepId;
-        return {
-          ...branchWithoutCurrentStep,
-          state: 'failed',
-          failure: this.parallelJoinMismatch(fork.joinStepId),
-          durationMs: 0
-        };
-      })
+    const branches = (await Promise.all(active.branches.map(async (branch) => {
+      if (branch.state === 'completed' || branch.state === 'failed') {
+        return this.cloneBranch(branch);
+      }
+
+      return this.advanceBranch(definition, active.joinStepId, branch, execution);
+    }))).sort((left, right) => this.compareBranchIds(left.branchId, right.branchId));
+
+    return { ...execution, activeParallel: { ...active, branches } };
+  }
+
+  private async completeParallelJoin(
+    definition: WorkflowDefinition,
+    execution: WorkflowExecution
+  ): Promise<WorkflowExecution> {
+    const active = execution.activeParallel;
+
+    if (!active) {
+      throw new Error('Parallel join requires active parallel state.');
+    }
+
+    const branches = [...active.branches]
+      .map((branch) => this.cloneBranch(branch))
       .sort((left, right) => this.compareBranchIds(left.branchId, right.branchId));
-    const regionDurationMs = this.durationMs(regionStartedAt, this.clock.now());
+    const regionDurationMs = branches.reduce(
+      (maximum, branch) => Math.max(maximum, branch.durationMs ?? 0),
+      0
+    );
     const branchCompletedSteps = branches.flatMap((branch) => branch.completedSteps);
     const branchStepResults = branches.flatMap((branch) => branch.stepResults);
     const failedBranches = branches.filter((branch) => branch.state === 'failed');
@@ -319,27 +293,27 @@ export class InMemoryWorkflowRunner implements WorkflowRunner {
       const failure: WorkflowFailure = {
         code: 'parallel_branch_failed',
         message: 'One or more parallel branches failed.',
-        stepId: fork.joinStepId
+        stepId: active.joinStepId
       };
       const region: WorkflowFailedParallelRegionResult = {
-        forkStepId: fork.id,
-        joinStepId: fork.joinStepId,
+        forkStepId: active.forkStepId,
+        joinStepId: active.joinStepId,
         state: 'failed',
         branches,
         failure,
         durationMs: regionDurationMs
       };
 
-      return {
-        execution: {
-          ...this.withoutActiveParallel(activeExecution),
-          currentStepId: fork.joinStepId,
-          completedSteps: [...activeExecution.completedSteps, ...branchCompletedSteps],
-          stepResults: [...activeExecution.stepResults, ...branchStepResults],
-          parallelRegions: [...activeExecution.parallelRegions, region]
+      return this.failExecution(
+        {
+          ...this.withoutActiveParallel(execution),
+          currentStepId: active.joinStepId,
+          completedSteps: [...execution.completedSteps, ...branchCompletedSteps],
+          stepResults: [...execution.stepResults, ...branchStepResults],
+          parallelRegions: [...execution.parallelRegions, region]
         },
         failure
-      };
+      );
     }
 
     const output: readonly ParallelBranchResult[] = branches.map((branch) => ({
@@ -347,37 +321,60 @@ export class InMemoryWorkflowRunner implements WorkflowRunner {
       output: branch.output
     }));
     const region: WorkflowParallelRegionResult = {
-      forkStepId: fork.id,
-      joinStepId: fork.joinStepId,
+      forkStepId: active.forkStepId,
+      joinStepId: active.joinStepId,
       state: 'completed',
       branches,
       output,
       durationMs: regionDurationMs
     };
 
-    return {
-      execution: {
-        ...this.withoutActiveParallel(activeExecution),
-        currentStepId: fork.joinStepId,
-        completedSteps: [...activeExecution.completedSteps, ...branchCompletedSteps],
-        stepResults: [...activeExecution.stepResults, ...branchStepResults],
-        parallelRegions: [...activeExecution.parallelRegions, region]
-      },
-      output
+    const withoutActive = {
+      ...this.withoutActiveParallel(execution),
+      currentStepId: active.joinStepId,
+      completedSteps: [...execution.completedSteps, ...branchCompletedSteps],
+      stepResults: [...execution.stepResults, ...branchStepResults],
+      parallelRegions: [...execution.parallelRegions, region]
     };
+    const join = this.findStep(definition, active.joinStepId);
+
+    if (!join || getWorkflowStepKind(join) !== 'join') {
+      return this.failExecution(withoutActive, this.parallelJoinMismatch(active.joinStepId));
+    }
+
+    const joinResult = this.executePassThroughStep(join, output);
+    const joined = {
+      ...withoutActive,
+      completedSteps: [...withoutActive.completedSteps, join.id],
+      stepResults: [...withoutActive.stepResults, joinResult]
+    };
+    const nextStep = this.resolveNextStep(
+      definition,
+      join,
+      joined,
+      joinResult.input,
+      joinResult.output
+    );
+
+    return nextStep.failure
+      ? this.failExecution(joined, nextStep.failure)
+      : { ...joined, currentStepId: nextStep.stepId };
   }
 
-  private async executeBranch(
+  private async advanceBranch(
     definition: WorkflowDefinition,
     joinStepId: string,
     initialBranch: WorkflowBranchExecution,
     parentExecution: WorkflowExecution
   ): Promise<WorkflowBranchExecution> {
     const branchStartedAt = this.clock.now();
-    let branch = initialBranch;
-    let currentValue = initialBranch.input;
+    const branch = initialBranch.state === 'pending'
+      ? { ...initialBranch, state: 'running' as const }
+      : this.cloneBranch(initialBranch);
+    const currentValue = branch.stepResults.length === 0
+      ? branch.input
+      : branch.stepResults[branch.stepResults.length - 1].output;
 
-    while (branch.state === 'running') {
       if (branch.currentStepId === joinStepId) {
         const { currentStepId: ignoredCurrentStepId, ...branchWithoutCurrentStep } = branch;
         void ignoredCurrentStepId;
@@ -385,7 +382,7 @@ export class InMemoryWorkflowRunner implements WorkflowRunner {
           ...branchWithoutCurrentStep,
           state: 'completed',
           output: currentValue,
-          durationMs: this.durationMs(branchStartedAt, this.clock.now())
+          durationMs: (branch.durationMs ?? 0) + this.durationMs(branchStartedAt, this.clock.now())
         };
       }
 
@@ -454,8 +451,7 @@ export class InMemoryWorkflowRunner implements WorkflowRunner {
         );
       }
 
-      currentValue = stepResult.output;
-      branch = {
+      const progressed = {
         ...branch,
         completedSteps: [...branch.completedSteps, step.id],
         stepResults: [...branch.stepResults, stepResult]
@@ -466,20 +462,21 @@ export class InMemoryWorkflowRunner implements WorkflowRunner {
         step,
         {
           ...branchExecutionView,
-          stepResults: [...parentExecution.stepResults, ...branch.stepResults]
+          stepResults: [...parentExecution.stepResults, ...progressed.stepResults]
         },
         stepResult.input,
         stepResult.output
       );
 
       if (nextStep.failure) {
-        return this.failBranch(branch, nextStep.failure, branchStartedAt);
+        return this.failBranch(progressed, nextStep.failure, branchStartedAt);
       }
 
-      branch = { ...branch, currentStepId: nextStep.stepId };
-    }
-
-    return branch;
+      return {
+        ...progressed,
+        currentStepId: nextStep.stepId,
+        durationMs: (branch.durationMs ?? 0) + this.durationMs(branchStartedAt, this.clock.now())
+      };
   }
 
   private failBranch(
@@ -494,8 +491,43 @@ export class InMemoryWorkflowRunner implements WorkflowRunner {
       ...branchWithoutCurrentStep,
       state: 'failed',
       failure,
-      durationMs: this.durationMs(branchStartedAt, this.clock.now())
+      durationMs: (branch.durationMs ?? 0) + this.durationMs(branchStartedAt, this.clock.now())
     };
+  }
+
+  private cloneExecution(execution: WorkflowExecution): WorkflowExecution {
+    return {
+      ...execution,
+      completedSteps: [...execution.completedSteps],
+      stepResults: [...execution.stepResults],
+      parallelRegions: [...execution.parallelRegions],
+      ...(execution.activeParallel
+        ? {
+            activeParallel: {
+              ...execution.activeParallel,
+              branches: execution.activeParallel.branches.map((branch) => this.cloneBranch(branch))
+            }
+          }
+        : {})
+    };
+  }
+
+  private cloneBranch(branch: WorkflowBranchExecution): WorkflowBranchExecution {
+    return {
+      ...branch,
+      completedSteps: [...branch.completedSteps],
+      stepResults: [...branch.stepResults]
+    };
+  }
+
+  private currentValue(execution: WorkflowExecution): unknown {
+    return execution.stepResults.length === 0
+      ? execution.workflowInput
+      : execution.stepResults[execution.stepResults.length - 1].output;
+  }
+
+  private aggregateDuration(execution: WorkflowExecution): number {
+    return execution.stepResults.reduce((total, result) => total + result.durationMs, 0);
   }
 
   private async executeStep(
@@ -569,6 +601,17 @@ export class InMemoryWorkflowRunner implements WorkflowRunner {
         durationMs: this.durationMs(startedAt, this.clock.now())
       };
     }
+  }
+
+  private executePassThroughStep(step: WorkflowStep, input: unknown): WorkflowStepResult {
+    const startedAt = this.clock.now();
+    return {
+      stepId: step.id,
+      status: WorkflowStepResultStatus.COMPLETED,
+      input,
+      output: input,
+      durationMs: this.durationMs(startedAt, this.clock.now())
+    };
   }
 
   private resolveNextStep(
@@ -785,8 +828,7 @@ export class InMemoryWorkflowRunner implements WorkflowRunner {
 
   private failExecution(
     execution: WorkflowExecution,
-    failure: WorkflowFailure | undefined,
-    executionStartedAt: Date
+    failure: WorkflowFailure | undefined
   ): WorkflowExecution {
     const normalizedFailure: WorkflowFailure = failure ?? {
       code: 'invalid_step',
@@ -798,7 +840,7 @@ export class InMemoryWorkflowRunner implements WorkflowRunner {
       ...execution,
       state: WorkflowState.FAILED,
       failure: normalizedFailure,
-      durationMs: this.durationMs(executionStartedAt, this.clock.now())
+      durationMs: this.aggregateDuration(execution)
     };
   }
 
