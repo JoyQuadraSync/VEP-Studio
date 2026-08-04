@@ -1,0 +1,24 @@
+{
+  "product": {
+    "productKey": "voluvia-satin-evening-dress",
+    "title": "Voluvia Satin Evening Dress",
+    "description": "Floor-length satin evening dress with adjustable straps.",
+    "color": "Emerald Green",
+    "length": "Maxi",
+    "price": {
+      "amount": 89,
+      "currency": "EUR"
+    },
+    "audience": "Women seeking an elegant event outfit"
+  },
+  "showcaseControls": {
+    "editorialApproved": true,
+    "finalApproved": true
+  },
+  "script": {
+    "hook": "Meet the Voluvia Satin Evening Dress in Emerald Green.",
+    "body": "Floor-length satin evening dress with adjustable straps. The Maxi silhouette is designed for Women seeking an elegant event outfit.",
+    "cta": "Discover the Voluvia collection.",
+    "source": "deterministic_showcase_template"
+  }
+}

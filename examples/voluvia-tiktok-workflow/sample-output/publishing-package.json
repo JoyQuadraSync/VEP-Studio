@@ -1,0 +1,49 @@
+{
+  "status": "mock_package_ready_for_review",
+  "productKey": "voluvia-satin-evening-dress",
+  "caption": {
+    "hook": "Meet the Voluvia Satin Evening Dress in Emerald Green.",
+    "body": "Floor-length satin evening dress with adjustable straps. The Maxi silhouette is designed for Women seeking an elegant event outfit.",
+    "cta": "Discover the Voluvia collection."
+  },
+  "assets": {
+    "video": {
+      "assetId": "voluvia-satin-evening-dress.video.v1",
+      "assetKind": "video",
+      "mediaId": "mock-video-voluvia-satin-evening-dress",
+      "uri": "mock://voluvia/video/voluvia-satin-evening-dress",
+      "rendered": false,
+      "provider": "deterministic_mock"
+    },
+    "subtitles": {
+      "assetId": "voluvia-satin-evening-dress.subtitles.en.v1",
+      "assetKind": "subtitles",
+      "format": "srt",
+      "language": "en",
+      "content": "1\n00:00:00,000 --> 00:00:03,000\nMeet the Voluvia Satin Evening Dress in Emerald Green.\n\n2\n00:00:03,000 --> 00:00:08,000\nFloor-length satin evening dress with adjustable straps. The Maxi silhouette is designed for Women seeking an elegant event outfit.\n\n3\n00:00:08,000 --> 00:00:11,000\nDiscover the Voluvia collection.\n"
+    },
+    "hashtags": {
+      "assetId": "voluvia-satin-evening-dress.hashtags.v1",
+      "assetKind": "hashtags",
+      "hashtags": [
+        "#Voluvia",
+        "#EmeraldGreen",
+        "#Maxi",
+        "#VoluviaSatinEveningDress"
+      ]
+    },
+    "cover": {
+      "assetId": "voluvia-satin-evening-dress.cover.v1",
+      "assetKind": "cover_metadata",
+      "headline": "Emerald Green Maxi Edit",
+      "productKey": "voluvia-satin-evening-dress",
+      "backgroundColor": "Emerald Green",
+      "layout": "showcase_portrait_v1"
+    }
+  },
+  "target": {
+    "platform": "tiktok",
+    "mode": "showcase_only"
+  },
+  "publishable": false
+}
