@@ -2,111 +2,76 @@
 
 ## Vision
 
-VEP Studio is an event-driven platform for connecting business events, AI agents, workers, workflows, APIs, and external systems. The roadmap is organized around small, runnable increments that build a reliable platform foundation before adding intelligence and production capabilities.
+VEP Studio is evolving into an event-driven workflow platform for connecting business events, people, AI agents, APIs, and external systems. Development proceeds through small, runnable, and testable milestones with explicit architecture reviews.
 
-## Phase 1 — Foundation and Event Ingestion
+## Current Version
 
-### Completed Sprints
+**v0.2.0**
 
-- Sprint 001 — Project Setup and Documentation Standards (Completed)
-- Sprint 002 — Event Bus Foundation (Completed)
-- Sprint 003 — Multi-Subscriber Event Routing (Completed)
-- Sprint 004 — Concurrent and Async Subscriber Execution (Completed)
+The current release includes the event platform foundation, declarative workflow definitions, graph validation, versioned registries, and the first linear workflow runtime.
 
-### Scope
+## Completed Sprints
 
-- GitHub repository
-- VS Code development environment
-- n8n runtime
-- Knowledge platform structure
-- Documentation standards
-- Event intake
-- Event validation
-- Event logging
-- Event router
-- Worker dispatcher
-- Error handling
+| Sprint | Milestone | Status |
+|---|---|---|
+| Sprint 001 | Project Setup and Documentation Standards | Completed |
+| Sprint 002 | EventBus Foundation | Completed |
+| Sprint 003 | Multi-Subscriber Event Routing | Completed |
+| Sprint 004 | Concurrent and Async Subscriber Execution | Completed |
+| Sprint 005 | Strongly Typed Events | Completed |
+| Sprint 006 | Runtime Foundation Stabilization | Completed |
+| Sprint 007 | Workflow Definition System | Completed |
+| Sprint 008 | Workflow Runtime | Completed |
 
----
+## Current Sprint
 
-## Phase 2 — Strongly Typed Events
+### Sprint 009 — Decision & Conditional Workflow
 
-### Completed Sprints
+Expand workflow expressiveness beyond linear step progression through explicit decisions and conditional transitions.
 
-- Sprint 005 — Strongly Typed Events (Completed)
+## Planned Sprints
 
-### Scope
+### Sprint 010 — Parallel Workflow
 
-- strongly typed event contracts
-- typed payloads
-- event factory abstraction
-- compile-time-safe event flow
+Support workflows with coordinated parallel branches.
 
----
+### Sprint 011 — Persistence & Recovery
 
-## Phase 3 — Reliability and Workflow Foundations
+Establish durable workflow state and execution recovery capabilities.
 
-### Completed Sprints
+### Sprint 012 — Retry / Timeout / Dead Letter
 
-- Sprint 006 — Runtime Foundation Stabilization (Completed)
-- Sprint 007 — Workflow Definition System (Completed)
-- Sprint 008 — Workflow Runtime (Completed)
+Introduce runtime reliability policies after durable execution boundaries exist.
 
-### Current Sprint
+### Sprint 013 — Human Tasks
 
-- Sprint 009 — Subscriber Timeout
+Support workflows that wait for human input, review, or approval.
 
-### Planned Sprints
+### Sprint 014 — AI Agent Runtime
 
-- Sprint 010 — Retry Policy
-- Sprint 011 — Dead Letter Queue
-- Sprint 012 — Agent Runtime
+Enable governed AI-agent participation through workflow runtime boundaries.
 
----
+### Sprint 015 — Visual Workflow Designer
 
-## Phase 4 — Intelligence and Platform Operations
+Provide visual authoring and inspection for workflow definitions.
 
-### Planned Sprints
+## Later Platform Milestones
 
-- Sprint 013 — Memory
-- Sprint 014 — Tool Calling
-- Sprint 015 — Scheduler
-- Sprint 016 — Observability
-- Sprint 017 — Authentication
-- Sprint 018 — Production Deployment
-
----
-
-## Phase 5 — AI Workforce
-
-### Planned Focus Areas
-
-- Customer Voice Agent
-- Research Agent
-- Creative Agent
-- Sales Agent
-- Platform Engineer Agent
-
----
-
-## Phase 6 — Enterprise Platform
-
-### Planned Focus Areas
-
-- Monitoring
-- Dashboard
-- Governance
-- Learning system
-- Cost control
-- Release management
-
----
+- scheduling
+- observability and operational monitoring
+- authentication and authorization
+- production deployment
+- governance and cost control
+- external integration management
 
 ## Architecture Principles
 
 - Deliver small, runnable increments.
-- Preserve runtime behavior while improving architecture.
-- Keep the event bus generic and infrastructure-focused.
-- Separate transport concerns from domain event creation.
-- Prefer compile-time safety over runtime-only validation.
-- Design for extension with typed contracts and clear responsibilities.
+- Preserve existing behavior while extending capabilities.
+- Keep workflow definitions immutable and declarative.
+- Keep workflow execution state in immutable snapshots.
+- Keep EventBus outside workflow control flow.
+- Separate validation, registration, execution, and operation resolution.
+- Prefer explicit contracts over implicit framework behavior.
+- Make runtime behavior deterministic and testable.
+- Require RFC and architecture review before expanding runtime semantics.
