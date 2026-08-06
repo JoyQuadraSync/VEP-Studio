@@ -66,3 +66,31 @@ Provide visual authoring and inspection for workflow definitions.
 - Prefer explicit contracts over implicit framework behavior.
 - Make runtime behavior deterministic and testable.
 - Require RFC and architecture review before expanding runtime semantics.
+
+## Product Milestones
+
+Product milestones track business-facing capabilities separately from the engineering Sprint sequence above.
+
+### M1 — Voluvia AI Content Engine
+
+**Status:** Completed
+
+Delivered provider-neutral AI script generation and content planning, immutable prompt history, strict local validation, shared compatibility policy, brand-safety enforcement, and mandatory manual review.
+
+### M2 — TikTok Data Layer
+
+**Status:** Planned
+
+Plan governed TikTok analytics, comment intelligence, and product-performance ingestion. Work begins with an RFC covering data sources, permissions, synchronization, retention, and Planner integration.
+
+### M3 — AI Content Loop
+
+**Status:** Planned
+
+Use approved performance signals to inform content planning and script optimization while preserving review and safety boundaries.
+
+### M4 — Multi-Brand AI Platform
+
+**Status:** Planned
+
+Extend the governed AI content architecture to multiple brands without weakening brand-specific policy, prompt, fact, or review boundaries.
