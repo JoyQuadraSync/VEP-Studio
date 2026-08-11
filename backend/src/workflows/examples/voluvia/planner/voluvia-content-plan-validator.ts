@@ -459,6 +459,81 @@ const clientMetadataSchema = z.object({
   promptContentHash: z.literal(VOLUVIA_CONTENT_PLANNER_DE_V2_PROMPT_SHA256)
 }).strict();
 
+const contentPlanningResultSchema = z.object({
+  reviewStatus: z.literal('pending_manual_review'),
+  plan: voluviaContentPlanningCandidateSchema.extend({
+    brandSafety: z.object({
+      approvedFacts: z.array(factSchema),
+      forbiddenClaims: z.array(z.string()),
+      prohibitedTone: z.array(z.enum(PROHIBITED_TONES)),
+      manualReviewRequired: z.literal(true)
+    }).strict()
+  }).strict(),
+  generation: clientMetadataSchema.extend({
+    operationId: z.literal(VOLUVIA_CONTENT_PLAN_OPERATION_ID),
+    schemaVersion: z.literal(VOLUVIA_CONTENT_PLAN_SCHEMA_VERSION)
+  }).strict()
+}).strict();
+
+export interface ReviewedVoluviaContentPlanValidationContext {
+  readonly realBeforeAfterEvidenceAvailable: boolean;
+}
+
+/**
+ * Revalidates a stored Planner result without invoking a provider or changing
+ * Planner operation behavior. This is the recovery/read boundary used by
+ * downstream operations that consume an immutable reviewed plan.
+ */
+export function validateReviewedVoluviaContentPlanningResult(
+  value: unknown,
+  context: ReviewedVoluviaContentPlanValidationContext
+): VoluviaContentPlanningResult {
+  if (!isVoluviaJsonSafe(value)) fail('unsafe_json');
+  const parsed = contentPlanningResultSchema.safeParse(value);
+  if (!parsed.success) fail(classifyShapeFailure(parsed.error, 'other_local_validation'));
+  const result = parsed.data;
+  const facts = result.plan.brandSafety.approvedFacts;
+  validateFacts(facts);
+  if (JSON.stringify(facts) !== JSON.stringify(canonicalFacts(facts)) ||
+      !unique(result.plan.brandSafety.prohibitedTone) ||
+      result.generation.totalTokens !== result.generation.inputTokens + result.generation.outputTokens) {
+    fail('other_local_validation');
+  }
+  const factIds = facts.map((fact) => fact.factId);
+  const syntheticInput: VoluviaContentPlannerInput = {
+    product: {
+      productKey: 'voluvia-remy-hair-topper', name: 'Remy Echthaar Hair Topper',
+      category: 'hair-topper', material: '100% Remy Echthaar', hairType: 'human-hair',
+      lengthCm: 32, colors: [...VOLUVIA_COLORS], base: 'lightweight-hand-knotted-lace',
+      clipCount: 3, price: { amount: 49, currency: 'EUR' }, shipsFrom: 'Germany'
+    },
+    approvedProductFacts: facts.map((fact) => ({ ...fact })),
+    approvedSellingPoints: [...CONTENT_FOCUSES],
+    forbiddenClaims: [...result.plan.brandSafety.forbiddenClaims],
+    targetCustomer: { gender: 'women', concerns: [result.plan.audience.primaryConcern] },
+    brand: {
+      mission: VOLUVIA_BRAND_MISSION, promise: VOLUVIA_BRAND_PROMISE,
+      tone: [...BRAND_TONES], prohibitedTone: [...result.plan.brandSafety.prohibitedTone]
+    },
+    contentGoal: 'product-awareness', targetPlatform: 'TikTok', targetLanguage: 'de-DE',
+    preferredVideoDurationSeconds: result.plan.production.targetDurationSeconds,
+    plannerControls: {
+      preferredContentAngle: result.plan.strategy.contentAngle,
+      preferredContentFocus: result.plan.strategy.contentFocus,
+      excludedRecentlyUsedAngles: [], excludedRecentlyUsedFocuses: [],
+      priceMayBeFeatured: factIds.includes('price-49-eur'),
+      shippingMayBeFeatured: factIds.includes('ships-from-germany'),
+      realBeforeAfterEvidenceAvailable: context.realBeforeAfterEvidenceAvailable
+    }
+  };
+  validateContentPlanningCandidate({
+    audience: result.plan.audience,
+    strategy: result.plan.strategy,
+    production: result.plan.production
+  }, syntheticInput, facts);
+  return result;
+}
+
 export function validateContentPlanningClientResult(
   value: unknown,
   input: VoluviaContentPlannerInput,
@@ -512,22 +587,7 @@ export function validateVoluviaContentPlanningResult(
   effectiveFacts: readonly ApprovedProductFact[]
 ): VoluviaContentPlanningResult {
   if (!isVoluviaJsonSafe(value)) fail('unsafe_json');
-  const schema = z.object({
-    reviewStatus: z.literal('pending_manual_review'),
-    plan: voluviaContentPlanningCandidateSchema.extend({
-      brandSafety: z.object({
-        approvedFacts: z.array(factSchema),
-        forbiddenClaims: z.array(z.string()),
-        prohibitedTone: z.array(z.enum(PROHIBITED_TONES)),
-        manualReviewRequired: z.literal(true)
-      }).strict()
-    }).strict(),
-    generation: clientMetadataSchema.extend({
-      operationId: z.literal(VOLUVIA_CONTENT_PLAN_OPERATION_ID),
-      schemaVersion: z.literal(VOLUVIA_CONTENT_PLAN_SCHEMA_VERSION)
-    }).strict()
-  }).strict();
-  const parsed = schema.safeParse(value);
+  const parsed = contentPlanningResultSchema.safeParse(value);
   if (!parsed.success) fail(classifyShapeFailure(parsed.error, 'other_local_validation'));
   validateContentPlanningCandidate({
     audience: parsed.data.plan.audience,

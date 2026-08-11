@@ -18,6 +18,30 @@ import {
   VOLUVIA_CONTENT_PLANNER_DE_V2_PROMPT_SHA256,
   VOLUVIA_CONTENT_PLANNER_DE_V2_PROMPT_VERSION
 } from './voluvia/de/content-planner-v2.prompt';
+import {
+  VOLUVIA_VIDEO_PACKAGE_DE_PROMPT,
+  VOLUVIA_VIDEO_PACKAGE_DE_PROMPT_ID,
+  VOLUVIA_VIDEO_PACKAGE_DE_PROMPT_SHA256,
+  VOLUVIA_VIDEO_PACKAGE_DE_PROMPT_VERSION
+} from './voluvia/de/video-package-generator-v1.prompt';
+import {
+  VOLUVIA_VIDEO_PACKAGE_DE_V2_PROMPT,
+  VOLUVIA_VIDEO_PACKAGE_DE_V2_PROMPT_ID,
+  VOLUVIA_VIDEO_PACKAGE_DE_V2_PROMPT_SHA256,
+  VOLUVIA_VIDEO_PACKAGE_DE_V2_PROMPT_VERSION
+} from './voluvia/de/video-package-generator-v2.prompt';
+import {
+  VOLUVIA_VIDEO_PACKAGE_DE_V3_PROMPT,
+  VOLUVIA_VIDEO_PACKAGE_DE_V3_PROMPT_ID,
+  VOLUVIA_VIDEO_PACKAGE_DE_V3_PROMPT_SHA256,
+  VOLUVIA_VIDEO_PACKAGE_DE_V3_PROMPT_VERSION
+} from './voluvia/de/video-package-generator-v3.prompt';
+import {
+  VOLUVIA_VIDEO_PACKAGE_DE_V4_PROMPT,
+  VOLUVIA_VIDEO_PACKAGE_DE_V4_PROMPT_ID,
+  VOLUVIA_VIDEO_PACKAGE_DE_V4_PROMPT_SHA256,
+  VOLUVIA_VIDEO_PACKAGE_DE_V4_PROMPT_VERSION
+} from './voluvia/de/video-package-generator-v4.prompt';
 
 export interface PromptCatalog {
   resolve(reference: PromptReference): ResolvedPrompt | undefined;
@@ -70,10 +94,54 @@ export class StaticPromptCatalog implements PromptCatalog {
       content: canonicalizePromptContent(VOLUVIA_CONTENT_PLANNER_DE_V2_PROMPT),
       sha256: plannerV2Sha256
     });
+    const videoPackageSha256 = hashPromptContent(VOLUVIA_VIDEO_PACKAGE_DE_PROMPT);
+    if (videoPackageSha256 !== VOLUVIA_VIDEO_PACKAGE_DE_PROMPT_SHA256) {
+      throw new Error('Video package prompt content does not match its pinned SHA-256 hash.');
+    }
+    const videoPackagePrompt = Object.freeze({
+      promptId: VOLUVIA_VIDEO_PACKAGE_DE_PROMPT_ID,
+      promptVersion: VOLUVIA_VIDEO_PACKAGE_DE_PROMPT_VERSION,
+      content: canonicalizePromptContent(VOLUVIA_VIDEO_PACKAGE_DE_PROMPT),
+      sha256: videoPackageSha256
+    });
+    const videoPackageV2Sha256 = hashPromptContent(VOLUVIA_VIDEO_PACKAGE_DE_V2_PROMPT);
+    if (videoPackageV2Sha256 !== VOLUVIA_VIDEO_PACKAGE_DE_V2_PROMPT_SHA256) {
+      throw new Error('Video package v2 prompt content does not match its pinned SHA-256 hash.');
+    }
+    const videoPackageV2Prompt = Object.freeze({
+      promptId: VOLUVIA_VIDEO_PACKAGE_DE_V2_PROMPT_ID,
+      promptVersion: VOLUVIA_VIDEO_PACKAGE_DE_V2_PROMPT_VERSION,
+      content: canonicalizePromptContent(VOLUVIA_VIDEO_PACKAGE_DE_V2_PROMPT),
+      sha256: videoPackageV2Sha256
+    });
+    const videoPackageV3Sha256 = hashPromptContent(VOLUVIA_VIDEO_PACKAGE_DE_V3_PROMPT);
+    if (videoPackageV3Sha256 !== VOLUVIA_VIDEO_PACKAGE_DE_V3_PROMPT_SHA256) {
+      throw new Error('Video package v3 prompt content does not match its pinned SHA-256 hash.');
+    }
+    const videoPackageV3Prompt = Object.freeze({
+      promptId: VOLUVIA_VIDEO_PACKAGE_DE_V3_PROMPT_ID,
+      promptVersion: VOLUVIA_VIDEO_PACKAGE_DE_V3_PROMPT_VERSION,
+      content: canonicalizePromptContent(VOLUVIA_VIDEO_PACKAGE_DE_V3_PROMPT),
+      sha256: videoPackageV3Sha256
+    });
+    const videoPackageV4Sha256 = hashPromptContent(VOLUVIA_VIDEO_PACKAGE_DE_V4_PROMPT);
+    if (videoPackageV4Sha256 !== VOLUVIA_VIDEO_PACKAGE_DE_V4_PROMPT_SHA256) {
+      throw new Error('Video package v4 prompt content does not match its pinned SHA-256 hash.');
+    }
+    const videoPackageV4Prompt = Object.freeze({
+      promptId: VOLUVIA_VIDEO_PACKAGE_DE_V4_PROMPT_ID,
+      promptVersion: VOLUVIA_VIDEO_PACKAGE_DE_V4_PROMPT_VERSION,
+      content: canonicalizePromptContent(VOLUVIA_VIDEO_PACKAGE_DE_V4_PROMPT),
+      sha256: videoPackageV4Sha256
+    });
     this.prompts = new Map<string, ResolvedPrompt>([
       [this.key(prompt), prompt],
       [this.key(plannerPrompt), plannerPrompt],
-      [this.key(plannerV2Prompt), plannerV2Prompt]
+      [this.key(plannerV2Prompt), plannerV2Prompt],
+      [this.key(videoPackagePrompt), videoPackagePrompt],
+      [this.key(videoPackageV2Prompt), videoPackageV2Prompt],
+      [this.key(videoPackageV3Prompt), videoPackageV3Prompt],
+      [this.key(videoPackageV4Prompt), videoPackageV4Prompt]
     ]);
   }
 
