@@ -135,7 +135,7 @@ test('trusted-local capability parser is exact and rejects similarly named or un
   const version = 'ffmpeg version 8.1.2\n'; const probe = 'ffprobe version 8.1.2\n';
   const buildconf = PHASE_TWO_BUILD_CONFIGURATION.map(value => `  ${value}`).join('\n');
   const encoders = ' V....D libopenh264 OpenH264\n A....D aac AAC';
-  const filters = ['drawtext', 'scale', 'pad', 'trim', 'setpts', 'concat', 'atrim', 'apad', 'asetpts'].map(value => ` ... ${value} description`).join('\n');
+  const filters = ['drawtext', 'scale', 'pad', 'trim', 'setpts', 'concat', 'atrim', 'apad', 'asetpts'].map(value => ` .. ${value} V->V description`).join('\n');
   const muxers = ' E mp4 MP4'; const protocols = 'Input:\n  file\n  pipe\nOutput:\n  file\n  pipe';
   assert.doesNotThrow(() => trustedLocalRuntimeModule.validateRuntimeCapabilityOutputForTestOnly(version, buildconf,
     encoders, filters, muxers, protocols, probe));
@@ -145,6 +145,38 @@ test('trusted-local capability parser is exact and rejects similarly named or un
     encoders, filters.replace('drawtext', 'drawtext_extra'), muxers, protocols, probe), 'toolchain_invalid');
   fails(() => trustedLocalRuntimeModule.validateRuntimeCapabilityOutputForTestOnly(version, buildconf,
     `${encoders}\n V....D libx264 x264`, filters, muxers, protocols, probe), 'toolchain_invalid');
+});
+
+test('FFmpeg 8.1.2 filter-table parser accepts exact two-flag rows and ignores legends structurally', () => {
+  const version = 'ffmpeg version 8.1.2\n'; const probe = 'ffprobe version 8.1.2\n';
+  const buildconf = PHASE_TWO_BUILD_CONFIGURATION.map(value => `  ${value}`).join('\n');
+  const encoders = ' V....D libopenh264 OpenH264\n A....D aac AAC'; const muxers = ' E mp4 MP4';
+  const protocols = 'Input:\n  file\n  pipe\nOutput:\n  file\n  pipe';
+  const rows = [
+    ' T. drawtext          V->V       Draw text on top of video frames using libfreetype library.',
+    ' .. scale             V->V       Scale the input video size and/or convert the image format.',
+    ' T. pad               V->V       Pad the input video.',
+    ' T. trim              V->V       Pick one continuous section from the input, drop the rest.',
+    ' .. setpts            V->V       Set PTS for the output video frame.',
+    ' .. concat            N->N       Concatenate audio and video streams.',
+    ' T. atrim             A->A       Pick one continuous section from the input, drop the rest.',
+    ' T. apad              A->A       Pad audio with silence.',
+    ' .. asetpts           A->A       Set PTS for the output audio frame.'
+  ];
+  const listing = eol => ['Filters:', '  T.. = Timeline support', '  .S. = Slice threading',
+    '  A = Audio input/output', '  V = Video input/output', '  N = Dynamic number and/or type of input/output',
+    '  | = Source or sink filter', '  ------', '', ...rows, ''].join(eol);
+  for (const eol of ['\n', '\r\n']) assert.doesNotThrow(() =>
+    trustedLocalRuntimeModule.validateRuntimeCapabilityOutputForTestOnly(version, buildconf, encoders, listing(eol), muxers, protocols, probe));
+  for (const [required, similar] of [['drawtext', 'drawtext2'], ['scale', 'scale2ref'], ['pad', 'tpad'],
+    ['trim', 'trimfoo'], ['asetpts', 'asetpts_extra']]) fails(() =>
+    trustedLocalRuntimeModule.validateRuntimeCapabilityOutputForTestOnly(version, buildconf, encoders,
+      listing('\n').replace(new RegExp(`(\\s)${required}(\\s)`, 'u'), `$1${similar}$2`), muxers, protocols, probe), 'toolchain_invalid');
+  fails(() => trustedLocalRuntimeModule.validateRuntimeCapabilityOutputForTestOnly(version, buildconf, encoders,
+    listing('\n').replace(' T. drawtext          V->V', ' T. drawtext          malformed'), muxers, protocols, probe), 'toolchain_invalid');
+  const previousIncompatible = rows.map(row => row.replace(/^ ([T.][S.]) /u, ' ... ')).join('\n');
+  fails(() => trustedLocalRuntimeModule.validateRuntimeCapabilityOutputForTestOnly(version, buildconf, encoders,
+    previousIncompatible, muxers, protocols, probe), 'toolchain_invalid');
 });
 
 test('trusted-local lineage is unique and bounded hashing rejects growth and early close', async () => {

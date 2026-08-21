@@ -296,7 +296,7 @@ function validateRuntime(version: string, buildconf: string, encoders: string, f
   const flags = buildconf.split(/\r?\n/u).map((line) => line.trim()).filter((line) => line.startsWith('--'));
   if (JSON.stringify(flags) !== JSON.stringify(PHASE_TWO_BUILD_CONFIGURATION) || /--enable-(?:gpl|nonfree|network|devices|hwaccels|libx264|libx265|libfdk-aac)\b/u.test(buildconf))
     throw new RenderingPhaseTwoFailure('toolchain_invalid');
-  const encoderNames = tableNames(encoders, /^[VASD\.]{6}\s+(\S+)\s+/u); const filterNames = tableNames(filters, /^[TSC\.]{3}\s+(\S+)\s+/u);
+  const encoderNames = tableNames(encoders, /^[VASD\.]{6}\s+(\S+)\s+/u); const filterNames = filterTableNames(filters);
   const muxerNames = tableNames(muxers, /^[D\. ]?E\s+(\S+)\s+/u); const protocolNames = new Set(protocols.split(/\r?\n/u).map((line) => line.trim())
     .filter((line) => /^[a-z0-9_]+$/u.test(line)));
   for (const name of ['libopenh264', 'aac']) if (!encoderNames.has(name)) throw new RenderingPhaseTwoFailure('toolchain_invalid');
@@ -307,6 +307,16 @@ function validateRuntime(version: string, buildconf: string, encoders: string, f
 }
 function tableNames(value: string, pattern: RegExp): Set<string> { const names = new Set<string>(); for (const raw of value.split(/\r?\n/u)) {
   const match = raw.trim().match(pattern); if (match?.[1]) names.add(match[1]); } return names; }
+function filterTableNames(value: string): Set<string> {
+  const names = new Set<string>();
+  for (const raw of value.split(/\r?\n/u)) {
+    const line = raw.trim(); if (!/^[T.][S.]\s/u.test(line)) continue;
+    const match = line.match(/^[T.][S.]\s+([a-z0-9_]+)\s+[AVDSTN|?]+->[AVDSTN|?]+\s+\S.*$/u);
+    if (!match?.[1] || names.has(match[1])) throw new RenderingPhaseTwoFailure('toolchain_invalid');
+    names.add(match[1]);
+  }
+  return names;
+}
 async function boundedText(filePath: string): Promise<string> { const value = await readFile(filePath, 'utf8'); if (Buffer.byteLength(value) > 256 * 1024) throw new RenderingPhaseTwoFailure('toolchain_invalid'); return value; }
 async function validateDependencyIdentities(): Promise<void> {
   const [ft, hb, oh] = await Promise.all([boundedText(PATHS.freetypeHeader), boundedText(PATHS.harfbuzzPc), boundedText(PATHS.openh264Header)]);
