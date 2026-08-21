@@ -32,8 +32,12 @@ export interface ResolvedFfmpegExecution {
   readonly executionTrust: 'test_only' | 'trusted_local_reference';
 }
 const resolvedExecutionTrust = new WeakMap<object, 'test_only' | 'trusted_local_reference'>();
+export function isTestOnlyResolvedExecutionInternal(value: unknown): boolean {
+  return typeof value === 'object' && value !== null && resolvedExecutionTrust.get(value) === 'test_only';
+}
 export function assertTrustedLocalResolvedExecution(value: unknown): asserts value is ResolvedFfmpegExecution {
-  if (typeof value !== 'object' || value === null || resolvedExecutionTrust.get(value) !== 'trusted_local_reference')
+  const runtime = require('../runtime/trusted-local-runtime') as { isTrustedLocalResolvedExecution(value: unknown): boolean };
+  if (typeof value !== 'object' || value === null || !runtime.isTrustedLocalResolvedExecution(value))
     throw new RenderingPhaseTwoFailure('process_failed');
 }
 export interface CommandManifestResult {
@@ -74,6 +78,12 @@ export interface ExecutionPathResolution {
 
 export function resolveExecutionManifest(logical: LogicalFfmpegCommandManifest,
   paths: ExecutionPathResolution, assertTrustedPath: (value: string) => void): ResolvedFfmpegExecution {
+  return resolveExecutionManifestWithTrust(logical, paths, assertTrustedPath, 'test_only');
+}
+
+function resolveExecutionManifestWithTrust(logical: LogicalFfmpegCommandManifest,
+  paths: ExecutionPathResolution, assertTrustedPath: (value: string) => void,
+  trust: 'test_only' | 'trusted_local_reference'): ResolvedFfmpegExecution {
   try {
     assertTrustedPath(paths.executablePath); assertTrustedPath(paths.fontPath);
     assertTrustedPath(paths.outputMp4Path); assertTrustedPath(paths.outputSrtPath);
@@ -136,8 +146,8 @@ export function resolveExecutionManifest(logical: LogicalFfmpegCommandManifest,
     '-flags:a', '+bitexact', '-t', String(duration), paths.outputMp4Path);
   const resolved: ResolvedFfmpegExecution = deepFreeze({ executablePath: paths.executablePath, args, shell: false,
     inputPaths: [paths.fontPath, ...Object.values(paths.assetPaths), ...paths.subtitleTextFilePaths],
-    outputPaths: [paths.outputMp4Path, paths.outputSrtPath], measuredVideoDurations, executionTrust: 'test_only' });
-  resolvedExecutionTrust.set(resolved, 'test_only'); return resolved;
+    outputPaths: [paths.outputMp4Path, paths.outputSrtPath], measuredVideoDurations, executionTrust: trust });
+  resolvedExecutionTrust.set(resolved, trust); return resolved;
 }
 
 function escapeFilterPath(value: string): string {

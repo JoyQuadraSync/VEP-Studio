@@ -54,6 +54,8 @@ export class NodeFfmpegProcessRunner implements FfmpegProcessRunner {
     assertTrustedLocalResolvedExecution(command);
     if (this.#used) throw new RenderingPhaseTwoFailure('process_failed'); this.#used = true;
     try {
+      const runtime = require('../runtime/trusted-local-runtime') as { revalidateTrustedExecutionForConsumption(value: unknown): Promise<void> };
+      await runtime.revalidateTrustedExecutionForConsumption(command);
       const result = await this.#adapter.execute(command, { timeoutMs: 180000, gracefulTerminationMs: 5000 });
       if (result.timedOut) throw new RenderingPhaseTwoFailure('process_timeout');
       if (result.exitCode !== 0 || result.stderrBytes > 64 * 1024) throw new RenderingPhaseTwoFailure('process_failed');

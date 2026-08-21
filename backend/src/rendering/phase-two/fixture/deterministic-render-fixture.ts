@@ -26,6 +26,10 @@ export interface FixtureRenderServices { readonly environment: TrustedPhaseTwoEn
   readonly glyphCoverage: TrustedFontCoverage; readonly processRunner: FfmpegProcessRunner;
   readonly inspector: TrustedMediaInspector; readonly subtitleLayout: TrustedSubtitleLayoutCapability }
 const compositions = new WeakSet<object>();
+const fixtureResolvedExecutions = new WeakSet<object>();
+export function isFixtureResolvedExecutionInternal(value: unknown): boolean {
+  return typeof value === 'object' && value !== null && fixtureResolvedExecutions.has(value);
+}
 export class TrustedPhaseTwoFixtureComposition {
   readonly services: FixtureRenderServices;
   private constructor(services: FixtureRenderServices) { this.services = Object.freeze({ ...services }); compositions.add(this); Object.freeze(this); }
@@ -45,10 +49,17 @@ async function renderContained(input: FixtureRenderInput,
   const services = composition.services; assertTrustedPhaseTwoEnvironment(services.environment);
   validatePhaseOne(input.phaseOne); validateAssets(input.phaseOne, assets);
   const verified = services.environment.verified;
-  if (verified.executionTrust !== 'test_only' || getMediaInspectorTrust(services.inspector) !== 'test_only') throw new RenderingPhaseTwoFailure('toolchain_invalid');
-  if (services.processRunner instanceof NodeFfmpegProcessRunner) throw new RenderingPhaseTwoFailure('toolchain_invalid');
-  services.workspace.assertTrusted(); assertTrustedSubtitleLayout(services.subtitleLayout, 'test_only');
-  validateSubtitleGlyphCoverage(input.phaseOne.manifest.subtitles.canonicalCues, services.glyphCoverage, verified.fontSha256);
+  const runtime = require('../runtime/trusted-local-runtime') as { assertTrustedLocalComposition(value: unknown, services: readonly unknown[]): void;
+    authorizeTrustedLocalResolvedExecution(composition: unknown, resolved: object): void;
+    revalidateTrustedCompositionForRender(value: unknown): Promise<void> };
+  const trust = verified.executionTrust; if (getMediaInspectorTrust(services.inspector) !== trust || services.workspace.executionTrust !== trust)
+    throw new RenderingPhaseTwoFailure('toolchain_invalid');
+  if ((trust === 'test_only') === (services.processRunner instanceof NodeFfmpegProcessRunner)) throw new RenderingPhaseTwoFailure('toolchain_invalid');
+  services.workspace.assertTrusted(); assertTrustedSubtitleLayout(services.subtitleLayout, trust);
+  validateSubtitleGlyphCoverage(input.phaseOne.manifest.subtitles.canonicalCues, services.glyphCoverage, verified.fontSha256, trust);
+  if (trust === 'trusted_local_reference') runtime.assertTrustedLocalComposition(composition,
+    [services.environment, services.inspector, services.glyphCoverage, services.subtitleLayout, services.workspace]);
+  if (trust === 'trusted_local_reference') await runtime.revalidateTrustedCompositionForRender(composition);
   for (const cue of input.phaseOne.manifest.subtitles.canonicalCues) services.subtitleLayout.verify(cue.lines, verified.fontSha256);
   const srt = buildCanonicalSrt(input.phaseOne.manifest.subtitles.canonicalCues, input.phaseOne.manifest);
   const logicalAssets: LogicalAssetReference[] = assets.map(({ logicalId, kind, durationSeconds }) =>
@@ -77,11 +88,14 @@ async function renderContained(input: FixtureRenderInput,
       await services.workspace.validateIssuedFile(workspace, issuedPath);
       videoInspections[asset.logicalId] = await TrustedInputVideoInspection.inspect(services.inspector, issuedPath);
     }
-    const resolved = resolveExecutionManifest(command.logicalManifest, { executablePath: verified.executablePath,
+    const resolution = { executablePath: verified.executablePath,
       fontPath: verified.fontPath, assetPaths, subtitleTextFilePaths: textPaths,
-      outputMp4Path: workspace.outputMp4Path, outputSrtPath: workspace.outputSrtPath, videoInspections }, (value) => {
+      outputMp4Path: workspace.outputMp4Path, outputSrtPath: workspace.outputSrtPath, videoInspections };
+    const assertPath = (value: string): void => {
       if (value === verified.executablePath || value === verified.fontPath) return; services.workspace.assertIssued(workspace!, value);
-    });
+    };
+    const resolved = resolveExecutionManifest(command.logicalManifest, resolution, assertPath);
+    if (trust === 'trusted_local_reference') { fixtureResolvedExecutions.add(resolved); runtime.authorizeTrustedLocalResolvedExecution(composition, resolved); }
     await services.workspace.revalidate(workspace); const processResult = await services.processRunner.run(resolved);
     if (processResult.exitCode !== 0) throw new RenderingPhaseTwoFailure('process_failed');
     await services.workspace.validateIssuedFile(workspace, workspace.outputMp4Path);

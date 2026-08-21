@@ -25,7 +25,9 @@ async function ordinaryFile(value: string): Promise<void> { const info = await l
   if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1) throw new RenderingPhaseTwoFailure('workspace_invalid'); }
 export class FixtureWorkspaceResolver {
   readonly #applicationRoot: string; readonly #retention: DeveloperRetention; readonly #measurements: () => WorkspaceMeasurements;
-  readonly #scheduler: RetentionScheduler; readonly executionTrust: 'test_only' = 'test_only';
+  readonly #scheduler: RetentionScheduler;
+  get executionTrust(): 'test_only' | 'trusted_local_reference' { const runtime = require('../runtime/trusted-local-runtime') as { isTrustedLocalCapability(value: unknown): boolean };
+    return runtime.isTrustedLocalCapability(this) ? 'trusted_local_reference' : 'test_only'; }
   readonly #testHooks: WorkspaceTestHooks;
   private constructor(applicationRoot: string, measurements: () => WorkspaceMeasurements, retention: DeveloperRetention, scheduler: RetentionScheduler,
     testHooks: WorkspaceTestHooks) {

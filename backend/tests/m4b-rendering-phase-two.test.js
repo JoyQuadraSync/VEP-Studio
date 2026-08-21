@@ -3,6 +3,8 @@ const assert = require('node:assert/strict');
 const os = require('node:os');
 const path = require('node:path');
 const fs = require('node:fs');
+const { createHash } = require('node:crypto');
+const { spawnSync } = require('node:child_process');
 const { mkdtemp, rm, writeFile, readFile, symlink, rename, truncate } = require('node:fs/promises');
 const { input, clientResult } = require('./helpers/voluvia-video-package-fixture');
 const { createVoluviaVideoPackageOperation } = require('../dist/workflows/examples/voluvia/video-package/voluvia-video-package.operation');
@@ -10,10 +12,10 @@ const { runDeterministicRenderDryRun } = require('../dist/rendering/dry-run/dete
 const { RenderingPhaseTwoFailure, RENDERING_PHASE_TWO_FAILURE_CODES } = require('../dist/rendering/phase-two/failures/rendering-phase-two-failure');
 const toolchainModule = require('../dist/rendering/phase-two/toolchain/toolchain-profile');
 const { PHASE_TWO_BUILD_CONFIGURATION, PHASE_TWO_HARFBUZZ_PROFILE, PHASE_TWO_TOOLCHAIN_PROFILE, TrustedPhaseTwoEnvironment,
-  referenceEnvironmentIdForEvidenceTestOnly,
+  PHASE_TWO_FONT_PROFILE, referenceEnvironmentIdForEvidenceTestOnly,
   verifyTrustedToolchain } = toolchainModule;
 const { PHASE_TWO_RESOURCE_LIMITS, validateResourcePreflight } = require('../dist/rendering/phase-two/resources/resource-limits');
-const { buildCanonicalSrt, PHASE_TWO_SUBTITLE_STYLE, TrustedFontCoverage,
+const { assertTrustedSubtitleLayout, buildCanonicalSrt, PHASE_TWO_SUBTITLE_STYLE, TrustedFontCoverage,
   TrustedSubtitleLayoutCapability, validateSubtitleGlyphCoverage } = require('../dist/rendering/phase-two/subtitles/subtitle-boundary');
 const { FixtureWorkspaceResolver } = require('../dist/rendering/phase-two/workspace/fixture-workspace');
 const { buildLogicalCommandManifest, resolveExecutionManifest } = require('../dist/rendering/phase-two/command/ffmpeg-command-manifest');
@@ -24,6 +26,7 @@ const { getTrustedInputVideoDuration, getTrustedMediaInspector, TrustedInputVide
 const processRunnerModule = require('../dist/rendering/phase-two/process/ffmpeg-process-runner');
 const { NodeFfmpegProcessRunner, simulateWindowsTerminationTestOnly, unixProcessGroupTargetTestOnly,
   windowsTaskkillArgsTestOnly } = processRunnerModule;
+const trustedLocalRuntimeModule = require('../dist/rendering/phase-two/runtime/trusted-local-runtime');
 
 const hash = character => character.repeat(64);
 const fails = (fn, code) => assert.throws(fn, error => error instanceof RenderingPhaseTwoFailure && error.code === code);
@@ -37,8 +40,9 @@ async function phaseOneFixture() {
 const metadata = overrides => ({ operatingSystemIdentity: 'windows-x64-10.0.26100', ffmpegVersion: '8.1.2',
   openH264Version: '2.6.0', freeTypeVersion: '2.14.3', harfBuzzVersion: '14.2.1',
   harfBuzzBuildIdentity: PHASE_TWO_HARFBUZZ_PROFILE, buildConfiguration: [...PHASE_TWO_BUILD_CONFIGURATION],
-  ffmpegBinarySha256: hash('a'), openH264BinarySha256: hash('b'), freeTypeBinarySha256: hash('c'),
-  harfBuzzBinarySha256: hash('e'), fontSha256: hash('d'), ...overrides });
+  ffmpegBinarySha256: hash('a'), ffprobeBinarySha256: hash('f'), openH264BinarySha256: hash('b'), freeTypeBinarySha256: hash('c'),
+  harfBuzzBinarySha256: hash('e'), sourceVariableFontSha256: hash('1'), fontSha256: hash('d'),
+  fontMetricBinarySha256: hash('2'), codecConfiguration: PHASE_TWO_TOOLCHAIN_PROFILE, ...overrides });
 const expectations = overrides => ({ ...metadata(), executionReady: true, ...overrides });
 
 test('toolchain profile and reference identity bind every frozen environment input', () => {
@@ -46,19 +50,116 @@ test('toolchain profile and reference identity bind every frozen environment inp
   assert.equal(PHASE_TWO_TOOLCHAIN_PROFILE.video.frameRate, 30); assert.equal(PHASE_TWO_TOOLCHAIN_PROFILE.video.pixelFormat, 'yuv420p');
   const verified = verifyTrustedToolchain(metadata(), expectations()); assert.match(verified.referenceEnvironmentId, /^[a-f0-9]{64}$/);
   for (const [field, value, code] of [['operatingSystemIdentity', 'linux-x64', 'toolchain_invalid'],
-    ['ffmpegBinarySha256', hash('e'), 'toolchain_invalid'], ['openH264BinarySha256', hash('e'), 'toolchain_invalid'],
+    ['ffmpegBinarySha256', hash('e'), 'toolchain_invalid'], ['ffprobeBinarySha256', hash('e'), 'toolchain_invalid'],
+    ['openH264BinarySha256', hash('e'), 'toolchain_invalid'],
     ['freeTypeBinarySha256', hash('f'), 'toolchain_invalid'], ['harfBuzzBinarySha256', hash('f'), 'toolchain_invalid'],
-    ['fontSha256', hash('f'), 'font_invalid']]) {
+    ['sourceVariableFontSha256', hash('f'), 'font_invalid'], ['fontSha256', hash('f'), 'font_invalid'],
+    ['fontMetricBinarySha256', hash('f'), 'toolchain_invalid']]) {
     fails(() => verifyTrustedToolchain(metadata({ [field]: value }), expectations(),), code);
   }
   assert.notEqual(verified.referenceEnvironmentId,
     verifyTrustedToolchain(metadata({ operatingSystemIdentity: 'linux-x64' }), expectations({ operatingSystemIdentity: 'linux-x64' })).referenceEnvironmentId);
   const environment = TrustedPhaseTwoEnvironment.createTestOnly(metadata(), expectations());
   assert.equal(environment.verified.executionTrust, 'test_only'); assert.equal('createTrustedLocalReference' in TrustedPhaseTwoEnvironment, false);
-  for (const field of ['operatingSystemIdentity', 'openH264BinarySha256', 'freeTypeBinarySha256', 'harfBuzzBinarySha256', 'fontSha256']) {
+  for (const field of ['operatingSystemIdentity', 'openH264BinarySha256', 'freeTypeBinarySha256', 'harfBuzzBinarySha256',
+    'sourceVariableFontSha256', 'fontSha256', 'fontMetricBinarySha256']) {
     fails(() => TrustedPhaseTwoEnvironment.createTestOnly(metadata({ [field]: undefined }), expectations()),
-      field === 'fontSha256' ? 'font_invalid' : 'toolchain_invalid');
+      field === 'fontSha256' || field === 'sourceVariableFontSha256' ? 'font_invalid' : 'toolchain_invalid');
   }
+});
+
+test('reference identity binds FFprobe and the complete codec configuration', () => {
+  const baseline = referenceEnvironmentIdForEvidenceTestOnly(metadata());
+  assert.notEqual(referenceEnvironmentIdForEvidenceTestOnly(metadata({ ffprobeBinarySha256: hash('9') })), baseline);
+  const changedCodec = structuredClone(PHASE_TWO_TOOLCHAIN_PROFILE); changedCodec.audio.bitrate = 128000;
+  assert.notEqual(referenceEnvironmentIdForEvidenceTestOnly(metadata({ codecConfiguration: changedCodec })), baseline);
+  fails(() => verifyTrustedToolchain(metadata({ codecConfiguration: changedCodec }),
+    expectations({ codecConfiguration: changedCodec })), 'toolchain_invalid');
+});
+
+test('trusted-local runtime exposes one zero-material preflight and rejects forged authority', () => {
+  assert.equal(trustedLocalRuntimeModule.establishTrustedLocalRuntime.length, 0);
+  const exports = Object.keys(trustedLocalRuntimeModule).sort();
+  assert.equal(exports.includes('establishTrustedLocalRuntime'), true);
+  for (const forbidden of ['registerTrustedLocal', 'createTrustedLocal', 'constructTrustedLocal', 'resolveTrustedLocalExecutionInternal'])
+    assert.equal(exports.includes(forbidden), false);
+  for (const forbidden of ['createTrustedFontMetric', 'registerFontMetric', 'setFontMetricPath', 'createMetricProcessAdapter'])
+    assert.equal(exports.includes(forbidden), false);
+  const parsedMetric = trustedLocalRuntimeModule.parseFrozenFontMetricOutputForTestOnly('VEP_FONT_METRIC_V1\t1\t1\t1\t1\r\n');
+  assert.deepEqual(parsedMetric, { glyphCoverage: true, widthPx: 1, heightPx: 1, lineCount: 1 });
+  assert.equal('executionTrust' in parsedMetric, false); assert.equal(Object.isFrozen(parsedMetric), true);
+  for (const forged of [{}, Object.freeze({}), { executionTrust: 'trusted_local_reference' },
+    JSON.parse('{"executionTrust":"trusted_local_reference"}')]) assert.equal(trustedLocalRuntimeModule.isTrustedLocalCapability(forged), false);
+  for (const constructor of [TrustedPhaseTwoEnvironment, TrustedMediaInspector, TrustedFontCoverage,
+    TrustedSubtitleLayoutCapability, FixtureWorkspaceResolver, TrustedPhaseTwoFixtureComposition])
+    assert.equal(Object.getOwnPropertyNames(constructor).some(name => /TrustedLocal/u.test(name)), false);
+  fails(() => trustedLocalRuntimeModule.assertTrustedLocalComposition({}, []), 'toolchain_invalid');
+  fails(() => trustedLocalRuntimeModule.authorizeTrustedLocalResolvedExecution({}, Object.freeze({})), 'process_failed');
+});
+
+test('trusted-local rejected variants are closed without issuing provenance', async t => {
+  const expectedHashes = { ffmpeg: '47f90e890b4fd06605f708791b3b6f3635c0ac65af001936e7bf364f8e25d089',
+    ffprobe: '256459de6566608a65f4d1b6e42ea3cdac39ad472e69baafdca103252bdfb228',
+    freetype: '4c7336efdb382de3513e2532b547d5f747bd6660a37905737d0e6f7655173537',
+    harfbuzz: 'bb764b49def39b96640b81f136f8df0fec46bac9a2109b95dd9da0d66ca5fef3',
+    openh264: '4f74bc5e8f8b18ae3816aef71748175131a2a17d82099742fb4284bee05b0037',
+    sourceFont: 'bfb7bb691513f12e734dc346c03a03f784912432d7e3fa8e56efcf906fe86b3d',
+    font: '3a08a47daa00cade516425c15c57615aef2fd418ec9811a7b9f465088f92cc05',
+    fontMetrics: '82f5cf116ef6d0434809acf607b24784987a536a2111f212a7aa9d9357c44e11' };
+  const required = ['libopenh264', 'aac', 'drawtext', 'scale', 'pad', 'trim', 'setpts', 'concat', 'atrim', 'apad', 'asetpts', 'mp4', 'file', 'pipe'];
+  const observation = overrides => ({ hashes: { ...expectedHashes }, ffmpegVersion: '8.1.2', ffprobeVersion: '8.1.2',
+    buildConfiguration: [...PHASE_TWO_BUILD_CONFIGURATION], capabilities: [...required], ordinaryArtifacts: true,
+    unexpectedConfiguration: false, ...overrides });
+  assert.deepEqual(trustedLocalRuntimeModule.validateTrustedLocalObservationForTestOnly(observation()), { validated: true });
+  const cases = [
+    ['wrong FFmpeg hash', observation({ hashes: { ...expectedHashes, ffmpeg: hash('0') } }), 'toolchain_invalid'],
+    ['wrong FFprobe hash', observation({ hashes: { ...expectedHashes, ffprobe: hash('0') } }), 'toolchain_invalid'],
+    ['wrong dependency hash', observation({ hashes: { ...expectedHashes, harfbuzz: hash('0') } }), 'toolchain_invalid'],
+    ['wrong source font hash', observation({ hashes: { ...expectedHashes, sourceFont: hash('0') } }), 'font_invalid'],
+    ['wrong font hash', observation({ hashes: { ...expectedHashes, font: hash('0') } }), 'font_invalid'],
+    ['wrong metric helper hash', observation({ hashes: { ...expectedHashes, fontMetrics: hash('0') } }), 'toolchain_invalid'],
+    ['missing or linked artifact', observation({ ordinaryArtifacts: false }), 'toolchain_invalid'],
+    ['FFmpeg version mismatch', observation({ ffmpegVersion: '8.1.1' }), 'toolchain_invalid'],
+    ['FFprobe version mismatch', observation({ ffprobeVersion: '8.1.1' }), 'toolchain_invalid'],
+    ['buildconf mismatch', observation({ buildConfiguration: PHASE_TWO_BUILD_CONFIGURATION.slice(1) }), 'toolchain_invalid'],
+    ['missing capability', observation({ capabilities: required.slice(1) }), 'toolchain_invalid'],
+    ['unexpected capability', observation({ capabilities: [...required, 'libx264'] }), 'toolchain_invalid'],
+    ['unexpected configuration', observation({ unexpectedConfiguration: true }), 'toolchain_invalid']
+  ];
+  for (const [name, candidate, code] of cases) await t.test(name, () => fails(() =>
+    trustedLocalRuntimeModule.validateTrustedLocalObservationForTestOnly(candidate), code));
+  assert.equal('executionTrust' in trustedLocalRuntimeModule.validateTrustedLocalObservationForTestOnly(observation()), false);
+});
+
+test('trusted-local capability parser is exact and rejects similarly named or unexpected entries', () => {
+  const version = 'ffmpeg version 8.1.2\n'; const probe = 'ffprobe version 8.1.2\n';
+  const buildconf = PHASE_TWO_BUILD_CONFIGURATION.map(value => `  ${value}`).join('\n');
+  const encoders = ' V....D libopenh264 OpenH264\n A....D aac AAC';
+  const filters = ['drawtext', 'scale', 'pad', 'trim', 'setpts', 'concat', 'atrim', 'apad', 'asetpts'].map(value => ` ... ${value} description`).join('\n');
+  const muxers = ' E mp4 MP4'; const protocols = 'Input:\n  file\n  pipe\nOutput:\n  file\n  pipe';
+  assert.doesNotThrow(() => trustedLocalRuntimeModule.validateRuntimeCapabilityOutputForTestOnly(version, buildconf,
+    encoders, filters, muxers, protocols, probe));
+  fails(() => trustedLocalRuntimeModule.validateRuntimeCapabilityOutputForTestOnly(version, buildconf,
+    encoders.replace('libopenh264', 'libopenh264_fake'), filters, muxers, protocols, probe), 'toolchain_invalid');
+  fails(() => trustedLocalRuntimeModule.validateRuntimeCapabilityOutputForTestOnly(version, buildconf,
+    encoders, filters.replace('drawtext', 'drawtext_extra'), muxers, protocols, probe), 'toolchain_invalid');
+  fails(() => trustedLocalRuntimeModule.validateRuntimeCapabilityOutputForTestOnly(version, buildconf,
+    `${encoders}\n V....D libx264 x264`, filters, muxers, protocols, probe), 'toolchain_invalid');
+});
+
+test('trusted-local lineage is unique and bounded hashing rejects growth and early close', async () => {
+  assert.equal(trustedLocalRuntimeModule.verifyLineageIsolationForTestOnly(), true);
+  const bytes = Buffer.from('verified'); const expected = require('node:crypto').createHash('sha256').update(bytes).digest('hex');
+  assert.equal(await trustedLocalRuntimeModule.hashChunksForTestOnly([bytes], bytes.length), expected);
+  await rejects(trustedLocalRuntimeModule.hashChunksForTestOnly([bytes], bytes.length - 1), 'toolchain_invalid');
+  await rejects(trustedLocalRuntimeModule.hashChunksForTestOnly([bytes], bytes.length + 1), 'toolchain_invalid');
+});
+
+test('trusted-local source fixes cwd and Windows environment and contains no render call', async () => {
+  const source = await readFile(path.join(__dirname, '..', 'src', 'rendering', 'phase-two', 'runtime', 'trusted-local-runtime.ts'), 'utf8');
+  assert.match(source, /cwd: FFMPEG_ROOT/u); assert.match(source, /env: \{ PATH: '', SystemRoot: 'C:\\\\Windows' \}/u);
+  assert.equal(source.includes('process.env.SYSTEMROOT'), false); assert.equal(source.includes('process.cwd'), false);
+  assert.equal(source.includes('.run('), false); assert.equal(source.includes('fixture.mp4'), false); assert.equal(source.includes('subtitles.srt'), false);
 });
 
 test('HarfBuzz frozen identity is exact, fail-closed, and bound into the reference environment', () => {
@@ -129,7 +230,8 @@ test('toolchain runtime exports expose no trusted-local or path-injection verifi
 
 test('toolchain metadata validation is descriptor-first and never invokes accessors or toJSON', () => {
   for (const field of ['ffmpegVersion', 'buildConfiguration', 'ffmpegBinarySha256', 'openH264BinarySha256',
-    'freeTypeBinarySha256', 'harfBuzzVersion', 'harfBuzzBinarySha256', 'harfBuzzBuildIdentity', 'fontSha256']) {
+    'freeTypeBinarySha256', 'harfBuzzVersion', 'harfBuzzBinarySha256', 'harfBuzzBuildIdentity',
+    'sourceVariableFontSha256', 'fontSha256', 'fontMetricBinarySha256']) {
     let invoked = false; const hostile = metadata(); Object.defineProperty(hostile, field, { enumerable: true,
       get() { invoked = true; throw new Error('must not execute'); } });
     fails(() => verifyTrustedToolchain(hostile, expectations()), 'toolchain_invalid'); assert.equal(invoked, false);
@@ -236,6 +338,132 @@ test('trusted test layout metrics enforce exact width, vertical fit, spacing, an
   fails(() => capability(853, 64).verify(['line'], hash('d')), 'subtitle_invalid');
   fails(() => capability(852, 131).verify(['one', 'two'], hash('d')), 'subtitle_invalid');
   fails(() => capability(100, 64).verify(['one', 'two', 'three'], hash('d')), 'subtitle_invalid');
+});
+
+test('frozen static font provenance and metric helper bind canonical environment identity', () => {
+  assert.deepEqual(PHASE_TWO_FONT_PROFILE, { family: 'Noto Sans', version: '2.015',
+    sourceVariableFileName: 'NotoSans[wdth,wght].ttf', runtimeFileName: 'NotoSans-wght700-wdth100.ttf',
+    weight: 700, width: 100, faceIndex: 0, pixelSize: 64, fallback: 'prohibited' });
+  const baseline = referenceEnvironmentIdForEvidenceTestOnly(metadata());
+  for (const changed of [
+    metadata({ sourceVariableFontSha256: hash('3') }), metadata({ fontSha256: hash('4') }),
+    metadata({ fontMetricBinarySha256: hash('5') })
+  ]) assert.notEqual(referenceEnvironmentIdForEvidenceTestOnly(changed), baseline);
+  fails(() => verifyTrustedToolchain(metadata({ sourceVariableFontSha256: hash('3') }), expectations()), 'font_invalid');
+  fails(() => verifyTrustedToolchain(metadata({ fontSha256: hash('4') }), expectations()), 'font_invalid');
+  fails(() => verifyTrustedToolchain(metadata({ fontMetricBinarySha256: hash('5') }), expectations()), 'toolchain_invalid');
+});
+
+test('closed native metric fixtures cover kerning, combining marks, surrogate pairs, and missing glyphs', () => {
+  const parse = value => trustedLocalRuntimeModule.parseFrozenFontMetricOutputForTestOnly(value);
+  const helper = 'C:\\Users\\Jiayi\\AppData\\Local\\VEP-Studio\\toolchain\\install\\metrics\\frozen-font-metrics.exe';
+  assert.equal(fs.existsSync(helper), true);
+  const info = fs.lstatSync(helper); assert.equal(info.isFile(), true); assert.equal(info.isSymbolicLink(), false);
+  assert.equal(createHash('sha256').update(fs.readFileSync(helper)).digest('hex'),
+    '82f5cf116ef6d0434809acf607b24784987a536a2111f212a7aa9d9357c44e11');
+  const execute = input => {
+    const result = spawnSync(helper, [], { shell: false, cwd: path.dirname(helper), windowsHide: true,
+      input, encoding: 'utf8', timeout: 5000, maxBuffer: 1024, env: { PATH: '', SystemRoot: 'C:\\Windows' } });
+    assert.equal(result.error, undefined); assert.equal(result.signal, null); assert.equal(result.status, 0);
+    assert.equal(result.stderr, ''); assert.ok(Buffer.byteLength(result.stdout, 'utf8') <= 128);
+    return parse(result.stdout);
+  };
+  const a = execute('A'); const v = execute('V'); const av = execute('AV');
+  assert.ok(av.widthPx < a.widthPx + v.widthPx);
+  assert.deepEqual(execute('e\u0301'),
+    { glyphCoverage: true, widthPx: 39, heightPx: 50, lineCount: 1 });
+  assert.deepEqual(execute('\u{10780}'),
+    { glyphCoverage: true, widthPx: 43, heightPx: 21, lineCount: 1 });
+  assert.equal(execute('\u{1F600}').glyphCoverage, false);
+  for (const invalid of ['', 'VEP_FONT_METRIC_V1\t1\t84\t46\t1',
+    'VEP_FONT_METRIC_V1\ttrue\t84\t46\t1\r\n', 'VEP_FONT_METRIC_V1\t1\t84\t46\t3\r\n',
+    'VEP_FONT_METRIC_V1\t1\t84\t46\t1\r\nraw']) fails(() => parse(invalid), 'font_invalid');
+});
+
+test('font metric integrity failures remain font_invalid while genuine missing glyphs remain glyph_unsupported', async () => {
+  const phaseOne = await phaseOneFixture();
+  const integrityFailure = TrustedFontCoverage.createTestOnly(hash('d'), { supports() {
+    throw new RenderingPhaseTwoFailure('font_invalid');
+  } });
+  assert.throws(() => validateSubtitleGlyphCoverage(phaseOne.manifest.subtitles.canonicalCues, integrityFailure, hash('d')),
+    error => error instanceof RenderingPhaseTwoFailure && error.code === 'font_invalid');
+  const missingGlyph = TrustedFontCoverage.createTestOnly(hash('d'), { supports: () => false });
+  fails(() => validateSubtitleGlyphCoverage(phaseOne.manifest.subtitles.canonicalCues, missingGlyph, hash('d')), 'glyph_unsupported');
+});
+
+test('final trusted execution consumption revalidates both FFmpeg and the frozen static font', async () => {
+  const runtimeSource = await readFile(path.join(__dirname, '..', 'src', 'rendering', 'phase-two', 'runtime', 'trusted-local-runtime.ts'), 'utf8');
+  const boundary = runtimeSource.slice(runtimeSource.indexOf('export async function revalidateTrustedExecutionForConsumption'),
+    runtimeSource.indexOf('export function verifyLineageIsolationForTestOnly'));
+  assert.match(boundary, /observeArtifact\(PATHS\.ffmpeg, HASHES\.ffmpeg\)/u);
+  assert.match(boundary, /observeArtifact\(PATHS\.font, HASHES\.font\)/u);
+  assert.match(boundary, /RenderingPhaseTwoFailure\('font_invalid'\)/u);
+  assert.equal(boundary.includes('processRunner.run'), false);
+  assert.deepEqual(await trustedLocalRuntimeModule.exerciseFinalConsumptionBoundaryForTestOnly('unchanged_font'),
+    { outcome: 'accepted', processInvocationCount: 1 });
+  assert.deepEqual(await trustedLocalRuntimeModule.exerciseFinalConsumptionBoundaryForTestOnly('replaced_font'),
+    { outcome: 'font_invalid', processInvocationCount: 0 });
+});
+
+test('wrong frozen metric-helper identity fails before helper process invocation', () => {
+  assert.deepEqual(trustedLocalRuntimeModule.exerciseMetricHelperIdentityBoundaryForTestOnly('correct_hash'),
+    { outcome: 'accepted', helperInvocationCount: 1 });
+  assert.deepEqual(trustedLocalRuntimeModule.exerciseMetricHelperIdentityBoundaryForTestOnly('wrong_hash'),
+    { outcome: 'font_invalid', helperInvocationCount: 0 });
+});
+
+test('authoritative block metrics enforce exact horizontal and vertical boundaries without reflow or truncation', () => {
+  const capability = result => TrustedSubtitleLayoutCapability.createTestOnly(hash('d'), { measureBlock(lines) {
+    return { ...result, lineCount: lines.length }; } });
+  assert.doesNotThrow(() => capability({ glyphCoverage: true, widthPx: 852, heightPx: 272 }).verify(['one', 'two'], hash('d')));
+  fails(() => capability({ glyphCoverage: true, widthPx: 853, heightPx: 46 }).verify(['one'], hash('d')), 'subtitle_invalid');
+  fails(() => capability({ glyphCoverage: true, widthPx: 100, heightPx: 273 }).verify(['one', 'two'], hash('d')), 'subtitle_invalid');
+  fails(() => capability({ glyphCoverage: false, widthPx: 38, heightPx: 46 }).verify(['unsupported'], hash('d')), 'glyph_unsupported');
+  fails(() => capability({ glyphCoverage: true, widthPx: 100, heightPx: 46 }).verify(['one', 'two', 'three'], hash('d')), 'subtitle_invalid');
+  for (const malformed of ['\ud800', '\udc00', 'x\nvalue', 'x\tvalue', 'x'.repeat(43)])
+    fails(() => capability({ glyphCoverage: true, widthPx: 100, heightPx: 46 }).verify([malformed], hash('d')), 'subtitle_invalid');
+  const wrongLineCount = TrustedSubtitleLayoutCapability.createTestOnly(hash('d'), { measureBlock() {
+    return { glyphCoverage: true, widthPx: 100, heightPx: 46, lineCount: 1 }; } });
+  fails(() => wrongLineCount.verify(['one', 'two'], hash('d')), 'subtitle_invalid');
+});
+
+test('metric capabilities remain weak-membership protected and cannot be copied, serialized, or prototype-forged', () => {
+  const legitimate = TrustedSubtitleLayoutCapability.createTestOnly(hash('d'), { measureBlock() {
+    return { glyphCoverage: true, widthPx: 100, heightPx: 46, lineCount: 1 }; } });
+  assert.doesNotThrow(() => assertTrustedSubtitleLayout(legitimate, 'test_only'));
+  for (const forged of [{ ...legitimate }, JSON.parse(JSON.stringify(legitimate)), Object.create(Object.getPrototypeOf(legitimate))])
+    fails(() => assertTrustedSubtitleLayout(forged, 'test_only'), 'subtitle_invalid');
+  assert.equal(trustedLocalRuntimeModule.verifyLineageIsolationForTestOnly(), true);
+});
+
+test('trusted-local font metric source is fixed-path, bounded, static-font-only, and non-rendering', async () => {
+  const runtimeSource = await readFile(path.join(__dirname, '..', 'src', 'rendering', 'phase-two', 'runtime', 'trusted-local-runtime.ts'), 'utf8');
+  const nativeSource = await readFile(path.join(__dirname, '..', 'src', 'rendering', 'phase-two', 'runtime', 'native', 'frozen-font-metrics.c'), 'utf8');
+  assert.match(runtimeSource, /NotoSans-wght700-wdth100\.ttf/u);
+  assert.match(runtimeSource, /3a08a47daa00cade516425c15c57615aef2fd418ec9811a7b9f465088f92cc05/u);
+  assert.match(runtimeSource, /bfb7bb691513f12e734dc346c03a03f784912432d7e3fa8e56efcf906fe86b3d/u);
+  assert.match(runtimeSource, /spawnSync\(PATHS\.fontMetrics, \[\]/u);
+  assert.match(runtimeSource, /timeout: 5000, maxBuffer: 1024/u);
+  assert.equal(runtimeSource.includes('measureFrozenNotoLine'), false);
+  assert.equal(runtimeSource.includes('codePoint >= 0x20'), false);
+  for (const token of ['FT_New_Face', 'FT_Set_Pixel_Sizes(face, 0, 64)', 'hb_ft_font_create_referenced', 'hb_shape',
+    '#define MAX_INPUT_BYTES 512', 'NotoSans-wght700-wdth100.ttf']) assert.equal(nativeSource.includes(token), true);
+  assert.equal(nativeSource.includes('ffmpeg'), false); assert.equal(nativeSource.includes('ffprobe'), false);
+});
+
+test('resolved drawtext binds the exact frozen static runtime fontfile', async () => {
+  const phaseOne = await phaseOneFixture(); const logical = buildLogicalCommandManifest(phaseOne.manifest, [
+    { logicalId: 'product-front', kind: 'image' }, { logicalId: 'lace-base-close-up', kind: 'image' },
+    { logicalId: 'approved-audio', kind: 'audio' }]).logicalManifest;
+  const staticFont = 'C:\\Users\\Jiayi\\AppData\\Local\\VEP-Studio\\toolchain\\install\\fonts\\NotoSans-wght700-wdth100.ttf';
+  const resolved = resolveExecutionManifest(logical, { executablePath: 'C:\\trusted\\ffmpeg.exe', fontPath: staticFont,
+    assetPaths: { 'product-front': 'C:\\work\\one.bin', 'lace-base-close-up': 'C:\\work\\two.bin',
+      'approved-audio': 'C:\\work\\audio.wav' },
+    subtitleTextFilePaths: phaseOne.manifest.subtitles.canonicalCues.map((_, index) => `C:\\work\\cue-${index}.txt`),
+    outputMp4Path: 'C:\\work\\fixture.mp4', outputSrtPath: 'C:\\work\\subtitles.srt', videoInspections: {} }, () => {});
+  const graph = resolved.args[resolved.args.indexOf('-filter_complex') + 1];
+  assert.ok(graph.includes('NotoSans-wght700-wdth100.ttf')); assert.equal(resolved.inputPaths.includes(staticFont), true);
+  assert.equal(graph.includes('NotoSans[wdth,wght].ttf'), false);
 });
 
 test('workspace rejects lexical and substituted-link paths and maps native errors', async t => {

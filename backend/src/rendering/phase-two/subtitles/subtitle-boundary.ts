@@ -33,35 +33,57 @@ export function buildCanonicalSrt(cues: readonly RenderSubtitleCue[], manifest?:
 }
 export interface FontCoverage { supports(codePoint: number): boolean }
 const coverageCapabilities = new WeakSet<object>();
-export class TrustedFontCoverage { readonly fontSha256: string; readonly coverage: FontCoverage; readonly executionTrust: 'test_only' = 'test_only';
+export class TrustedFontCoverage { readonly fontSha256: string; readonly coverage: FontCoverage;
+  get executionTrust(): 'test_only' | 'trusted_local_reference' { const runtime = require('../runtime/trusted-local-runtime') as { isTrustedLocalCapability(value: unknown): boolean };
+    return runtime.isTrustedLocalCapability(this) ? 'trusted_local_reference' : 'test_only'; }
   private constructor(fontSha256: string, coverage: FontCoverage) { this.fontSha256 = fontSha256; this.coverage = coverage; coverageCapabilities.add(this); Object.freeze(this); }
   static createTestOnly(fontSha256: string, coverage: FontCoverage): TrustedFontCoverage { return new TrustedFontCoverage(fontSha256, coverage); } }
-export function validateSubtitleGlyphCoverage(cues: readonly RenderSubtitleCue[], trusted: TrustedFontCoverage, expectedFontSha256?: string): void {
-  if (typeof trusted !== 'object' || trusted === null || !coverageCapabilities.has(trusted) || trusted.executionTrust !== 'test_only' ||
+export function validateSubtitleGlyphCoverage(cues: readonly RenderSubtitleCue[], trusted: TrustedFontCoverage, expectedFontSha256?: string,
+  expectedTrust: 'test_only' | 'trusted_local_reference' = 'test_only'): void {
+  if (typeof trusted !== 'object' || trusted === null || !coverageCapabilities.has(trusted) || trusted.executionTrust !== expectedTrust ||
     (expectedFontSha256 !== undefined && trusted.fontSha256 !== expectedFontSha256)) throw new RenderingPhaseTwoFailure('font_invalid');
   for (const cue of cues) for (const line of cue.lines) for (const scalar of line) { const codePoint = scalar.codePointAt(0);
     if (codePoint === undefined || !trusted.coverage.supports(codePoint)) throw new RenderingPhaseTwoFailure('glyph_unsupported'); }
 }
-export interface FontMetricImplementation { measureLine(text: string, configuration: { readonly fontSize: 64; readonly weight: 700; readonly widthAxis: 100 }):
-  { readonly widthPx: number; readonly heightPx: number } }
+export interface FontMetricResult { readonly glyphCoverage: boolean; readonly widthPx: number; readonly heightPx: number; readonly lineCount: 1 | 2 }
+export interface FontMetricImplementation {
+  measureLine?(text: string, configuration: { readonly fontSize: 64; readonly weight: 700; readonly widthAxis: 100 }):
+    { readonly widthPx: number; readonly heightPx: number };
+  measureBlock?(lines: readonly string[]): FontMetricResult;
+}
 const layoutCapabilities = new WeakSet<object>();
 export class TrustedSubtitleLayoutCapability {
-  readonly executionTrust: 'test_only' = 'test_only'; readonly fontSha256: string; readonly fontIdentity: 'Noto Sans@2.015'; readonly #metrics: FontMetricImplementation;
+  get executionTrust(): 'test_only' | 'trusted_local_reference' { const runtime = require('../runtime/trusted-local-runtime') as { isTrustedLocalCapability(value: unknown): boolean };
+    return runtime.isTrustedLocalCapability(this) ? 'trusted_local_reference' : 'test_only'; }
+  readonly fontSha256: string; readonly fontIdentity: 'Noto Sans@2.015'; readonly #metrics: FontMetricImplementation;
   private constructor(fontSha256: string, metrics: FontMetricImplementation) { this.fontSha256 = fontSha256; this.fontIdentity = 'Noto Sans@2.015';
     this.#metrics = metrics; layoutCapabilities.add(this); Object.freeze(this); }
   static createTestOnly(fontSha256: string, metrics: FontMetricImplementation): TrustedSubtitleLayoutCapability { return new TrustedSubtitleLayoutCapability(fontSha256, metrics); }
   verify(lines: readonly string[], expectedFontSha256: string): void {
-    if (!layoutCapabilities.has(this) || this.fontSha256 !== expectedFontSha256 || !Array.isArray(lines) || lines.length < 1 || lines.length > 2)
+    if (!layoutCapabilities.has(this) || this.fontSha256 !== expectedFontSha256 || !Array.isArray(lines) || lines.length < 1 || lines.length > 2 ||
+        lines.some((line) => typeof line !== 'string' || line.length === 0 || [...line].length > 42 || hasLoneSurrogate(line) ||
+          /[\r\n\t\u0000-\u001f]/u.test(line)))
       throw new RenderingPhaseTwoFailure('subtitle_invalid');
+    if (this.#metrics.measureBlock) {
+      const measured = this.#metrics.measureBlock(Object.freeze([...lines]));
+      if (!measured || measured.glyphCoverage !== true || measured.lineCount !== lines.length || !Number.isSafeInteger(measured.widthPx) ||
+          !Number.isSafeInteger(measured.heightPx) || measured.widthPx < 0 || measured.heightPx <= 0)
+        throw new RenderingPhaseTwoFailure(measured?.glyphCoverage === false ? 'glyph_unsupported' : 'subtitle_invalid');
+      const blockWidth = measured.widthPx + 48; const blockHeight = measured.heightPx + 48;
+      if (blockWidth > 900 || blockHeight > 320 || 90 + blockWidth > 990 || 1180 + blockHeight > 1500)
+        throw new RenderingPhaseTwoFailure('subtitle_invalid');
+      return;
+    }
+    const measureLine = this.#metrics.measureLine; if (!measureLine) throw new RenderingPhaseTwoFailure('subtitle_invalid');
     let maximumWidth = 0; let lineHeight = 0;
-    for (const line of lines) { const measured = this.#metrics.measureLine(line, { fontSize: 64, weight: 700, widthAxis: 100 });
+    for (const line of lines) { const measured = measureLine(line, { fontSize: 64, weight: 700, widthAxis: 100 });
       if (!Number.isFinite(measured.widthPx) || !Number.isFinite(measured.heightPx) || measured.widthPx < 0 || measured.heightPx <= 0)
         throw new RenderingPhaseTwoFailure('subtitle_invalid'); maximumWidth = Math.max(maximumWidth, measured.widthPx); lineHeight = Math.max(lineHeight, measured.heightPx); }
     const blockWidth = maximumWidth + 48; const blockHeight = lineHeight * lines.length + (lines.length - 1) * 12 + 48;
     if (blockWidth > 900 || blockHeight > 320 || 90 + blockWidth > 990 || 1180 + blockHeight > 1500) throw new RenderingPhaseTwoFailure('subtitle_invalid');
   }
 }
-export function assertTrustedSubtitleLayout(value: unknown, expectedTrust: 'test_only'): asserts value is TrustedSubtitleLayoutCapability {
+export function assertTrustedSubtitleLayout(value: unknown, expectedTrust: 'test_only' | 'trusted_local_reference'): asserts value is TrustedSubtitleLayoutCapability {
   if (typeof value !== 'object' || value === null || !layoutCapabilities.has(value) || (value as TrustedSubtitleLayoutCapability).executionTrust !== expectedTrust)
     throw new RenderingPhaseTwoFailure('subtitle_invalid');
 }
