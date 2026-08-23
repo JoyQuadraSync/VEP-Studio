@@ -122,6 +122,11 @@ interface TrustedLocalObservation {
 }
 export function parseFrozenFontMetricOutputForTestOnly(value: unknown): Readonly<{
   glyphCoverage: boolean; widthPx: number; heightPx: number; lineCount: 1 | 2 }> { return parseFrozenFontMetricOutput(value); }
+/** Pure semantic parser seam. It accepts no paths or trust material and cannot issue runtime provenance. */
+export function validateStaticFontBufferForTestOnly(value: unknown): Readonly<{ validated: true }> {
+  if (!Buffer.isBuffer(value)) throw new RenderingPhaseTwoFailure('font_invalid');
+  validateStaticFontBuffer(value); return Object.freeze({ validated: true });
+}
 /** Closed, side-effect-free helper-ordering harness. It cannot access files, spawn a process, or issue provenance. */
 export function exerciseMetricHelperIdentityBoundaryForTestOnly(scenario: unknown): Readonly<{
   outcome: 'accepted' | 'font_invalid'; helperInvocationCount: 0 | 1 }> {
@@ -324,6 +329,64 @@ async function validateDependencyIdentities(): Promise<void> {
       !/^Version:\s*14\.2\.1\s*$/mu.test(hb) || !/OPENH264_MAJOR\s+\(?2\)?/u.test(oh) || !/OPENH264_MINOR\s+\(?6\)?/u.test(oh) || !/OPENH264_REVISION\s+\(?0\)?/u.test(oh))
     throw new RenderingPhaseTwoFailure('toolchain_invalid');
 }
-async function validateFontIdentity(): Promise<void> { const bytes = await readFile(PATHS.font); const latin = bytes.toString('latin1');
-  if (!latin.includes('NotoSans-Bold') || !latin.includes('Version 2.015') || latin.includes('fvar') || latin.includes('gvar'))
-    throw new RenderingPhaseTwoFailure('font_invalid'); }
+interface SfntTable { readonly offset: number; readonly length: number }
+function validateStaticFontBuffer(value: Buffer): void {
+  try {
+    if (value.length < 12 || value.readUInt32BE(0) !== 0x00010000) throw new Error();
+    const tableCount = value.readUInt16BE(4); const directoryLength = 12 + tableCount * 16;
+    if (tableCount < 1 || tableCount > 128 || directoryLength > value.length) throw new Error();
+    const tables = new Map<string, SfntTable>();
+    for (let index = 0; index < tableCount; index += 1) {
+      const entry = 12 + index * 16; const tag = value.toString('ascii', entry, entry + 4);
+      const offset = value.readUInt32BE(entry + 8); const length = value.readUInt32BE(entry + 12);
+      if (!/^[\x20-\x7e]{4}$/u.test(tag) || tables.has(tag) || offset > value.length || length > value.length - offset) throw new Error();
+      tables.set(tag, Object.freeze({ offset, length }));
+    }
+    for (const tag of ['cmap', 'GDEF', 'GPOS', 'GSUB', 'glyf', 'hmtx', 'head', 'maxp', 'name', 'OS/2'])
+      if (!tables.has(tag)) throw new Error();
+    if (tables.has('fvar') || tables.has('gvar')) throw new Error();
+
+    const names = parseFrozenNameTable(value, tables.get('name')!);
+    if (names.get(1) !== 'Noto Sans' || names.get(2) !== 'Bold' || names.get(6) !== 'NotoSans-Bold') throw new Error();
+    const version = names.get(5); if (!version || !/^Version 2\.015(?:;[^\r\n]*\S)?$/u.test(version)) throw new Error();
+
+    const os2 = tables.get('OS/2')!; if (os2.length < 64) throw new Error();
+    const weightClass = value.readUInt16BE(os2.offset + 4); const widthClass = value.readUInt16BE(os2.offset + 6);
+    const selection = value.readUInt16BE(os2.offset + 62);
+    if (weightClass !== 700 || widthClass !== 5 || (selection & 0x20) === 0) throw new Error();
+    const head = tables.get('head')!; if (head.length < 46 || (value.readUInt16BE(head.offset + 44) & 0x0001) === 0) throw new Error();
+    const maxp = tables.get('maxp')!; if (maxp.length < 6 || value.readUInt16BE(maxp.offset + 4) !== 4515) throw new Error();
+  } catch { throw new RenderingPhaseTwoFailure('font_invalid'); }
+}
+function parseFrozenNameTable(value: Buffer, table: SfntTable): ReadonlyMap<number, string> {
+  if (table.length < 6) throw new Error();
+  const format = value.readUInt16BE(table.offset); const count = value.readUInt16BE(table.offset + 2);
+  const storageOffset = value.readUInt16BE(table.offset + 4); const recordsEnd = 6 + count * 12;
+  if (format !== 0 || count < 1 || recordsEnd > table.length || storageOffset < recordsEnd || storageOffset > table.length) throw new Error();
+  const selected = new Map<number, string>(); const required = new Set([1, 2, 5, 6]);
+  for (let index = 0; index < count; index += 1) {
+    const record = table.offset + 6 + index * 12; const platform = value.readUInt16BE(record);
+    const encoding = value.readUInt16BE(record + 2); const language = value.readUInt16BE(record + 4);
+    const nameId = value.readUInt16BE(record + 6); const length = value.readUInt16BE(record + 8);
+    const relativeOffset = value.readUInt16BE(record + 10);
+    if (platform !== 3 || encoding !== 1 || language !== 0x0409 || !required.has(nameId)) continue;
+    if (selected.has(nameId) || length === 0 || (length & 1) !== 0 || relativeOffset > table.length - storageOffset ||
+        length > table.length - storageOffset - relativeOffset) throw new Error();
+    selected.set(nameId, decodeUtf16Be(value, table.offset + storageOffset + relativeOffset, length));
+  }
+  if ([...required].some((nameId) => !selected.has(nameId))) throw new Error(); return selected;
+}
+function decodeUtf16Be(value: Buffer, offset: number, length: number): string {
+  let result = '';
+  for (let index = 0; index < length; index += 2) {
+    const code = value.readUInt16BE(offset + index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      if (index + 3 >= length) throw new Error(); const low = value.readUInt16BE(offset + index + 2);
+      if (low < 0xdc00 || low > 0xdfff) throw new Error(); result += String.fromCharCode(code, low); index += 2;
+    } else { if (code >= 0xdc00 && code <= 0xdfff) throw new Error(); result += String.fromCharCode(code); }
+  }
+  return result;
+}
+async function validateFontIdentity(): Promise<void> {
+  try { validateStaticFontBuffer(await readFile(PATHS.font)); } catch { throw new RenderingPhaseTwoFailure('font_invalid'); }
+}

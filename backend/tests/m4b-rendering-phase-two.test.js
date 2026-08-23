@@ -28,6 +28,39 @@ const { NodeFfmpegProcessRunner, simulateWindowsTerminationTestOnly, unixProcess
   windowsTaskkillArgsTestOnly } = processRunnerModule;
 const trustedLocalRuntimeModule = require('../dist/rendering/phase-two/runtime/trusted-local-runtime');
 
+const utf16be = value => { const result = Buffer.alloc(value.length * 2); for (let index = 0; index < value.length; index += 1)
+  result.writeUInt16BE(value.charCodeAt(index), index * 2); return result; };
+function staticFontFixture(overrides = {}) {
+  const nameValues = { 1: 'Noto Sans', 2: 'Bold', 5: 'Version 2.015; ttfautohint (v1.8.4.7-5d5b)', 6: 'NotoSans-Bold',
+    ...overrides.names };
+  const nameRecords = [1, 2, 5, 6].map(nameId => ({ nameId, bytes: utf16be(nameValues[nameId]) }));
+  if (overrides.duplicateNameId) nameRecords.push({ nameId: overrides.duplicateNameId,
+    bytes: utf16be(overrides.duplicateNameValue ?? nameValues[overrides.duplicateNameId]) });
+  if (overrides.malformedUtf16) nameRecords.find(record => record.nameId === 6).bytes = Buffer.from([0xd8, 0x00]);
+  const stringOffset = 6 + nameRecords.length * 12; const nameLength = stringOffset + nameRecords.reduce((sum, record) => sum + record.bytes.length, 0);
+  const name = Buffer.alloc(nameLength); name.writeUInt16BE(0, 0); name.writeUInt16BE(nameRecords.length, 2); name.writeUInt16BE(stringOffset, 4);
+  let relativeOffset = 0; nameRecords.forEach((record, index) => { const offset = 6 + index * 12;
+    name.writeUInt16BE(3, offset); name.writeUInt16BE(1, offset + 2); name.writeUInt16BE(0x0409, offset + 4);
+    name.writeUInt16BE(record.nameId, offset + 6); name.writeUInt16BE(record.bytes.length, offset + 8);
+    name.writeUInt16BE(relativeOffset, offset + 10); record.bytes.copy(name, stringOffset + relativeOffset); relativeOffset += record.bytes.length; });
+  if (overrides.malformedNameOffset) name.writeUInt16BE(0xffff, 16);
+  const os2 = Buffer.alloc(64); os2.writeUInt16BE(overrides.weight ?? 700, 4); os2.writeUInt16BE(overrides.width ?? 5, 6);
+  os2.writeUInt16BE(overrides.selection ?? 0x00a0, 62);
+  const head = Buffer.alloc(46); head.writeUInt16BE(overrides.macStyle ?? 0x0001, 44);
+  const maxp = Buffer.alloc(6); maxp.writeUInt16BE(overrides.glyphCount ?? 4515, 4);
+  const tables = { cmap: Buffer.alloc(4), GDEF: Buffer.alloc(4), GPOS: Buffer.alloc(4), GSUB: Buffer.alloc(4), glyf: Buffer.alloc(4),
+    hmtx: Buffer.alloc(4), head, maxp, name, 'OS/2': os2 };
+  if (overrides.missingTable) delete tables[overrides.missingTable]; if (overrides.variableTable) tables[overrides.variableTable] = Buffer.alloc(4);
+  const entries = Object.entries(tables); const directoryLength = 12 + entries.length * 16;
+  const totalLength = directoryLength + entries.reduce((sum, [, bytes]) => sum + bytes.length, 0); const result = Buffer.alloc(totalLength);
+  result.writeUInt32BE(0x00010000, 0); result.writeUInt16BE(entries.length, 4); let tableOffset = directoryLength;
+  entries.forEach(([tag, bytes], index) => { const entry = 12 + index * 16; result.write(tag, entry, 4, 'ascii');
+    result.writeUInt32BE(tableOffset, entry + 8); result.writeUInt32BE(bytes.length, entry + 12); bytes.copy(result, tableOffset); tableOffset += bytes.length; });
+  return result;
+}
+const tableDirectoryEntry = (font, tag) => { const count = font.readUInt16BE(4); for (let index = 0; index < count; index += 1) {
+  const offset = 12 + index * 16; if (font.toString('ascii', offset, offset + 4) === tag) return offset; } throw new Error('missing fixture table'); };
+
 const hash = character => character.repeat(64);
 const fails = (fn, code) => assert.throws(fn, error => error instanceof RenderingPhaseTwoFailure && error.code === code);
 const rejects = (promise, code) => assert.rejects(promise, error => error instanceof RenderingPhaseTwoFailure && error.code === code);
@@ -177,6 +210,52 @@ test('FFmpeg 8.1.2 filter-table parser accepts exact two-flag rows and ignores l
   const previousIncompatible = rows.map(row => row.replace(/^ ([T.][S.]) /u, ' ... ')).join('\n');
   fails(() => trustedLocalRuntimeModule.validateRuntimeCapabilityOutputForTestOnly(version, buildconf, encoders,
     previousIncompatible, muxers, protocols, probe), 'toolchain_invalid');
+});
+
+test('static-font semantic parser validates the frozen UTF-16BE identity and fails closed on drift', async t => {
+  const validate = trustedLocalRuntimeModule.validateStaticFontBufferForTestOnly; const valid = staticFontFixture();
+  assert.deepEqual(validate(valid), { validated: true });
+  assert.equal(valid.toString('latin1').includes('NotoSans-Bold'), false);
+  for (const version of ['Version 2.015', 'Version 2.015; ttfautohint (v1.8.4.7-5d5b)', 'Version 2.015;abc'])
+    await t.test(`accepted version: ${version}`, () => assert.doesNotThrow(() => validate(staticFontFixture({ names: { 5: version } }))));
+  for (const version of ['Version 2.015;', 'Version 2.015; ', 'Version 2.015;    ', 'Version 2.0150', 'Version 2.015x',
+    'Noto Version 2.015', ' Version 2.015', 'Version 2.015 ', 'Version 2.014'])
+    await t.test(`rejected version: ${JSON.stringify(version)}`, () => fails(() =>
+      validate(staticFontFixture({ names: { 5: version } })), 'font_invalid'));
+  const cases = [
+    ['wrong PostScript name', staticFontFixture({ names: { 6: 'NotoSans-Regular' } })],
+    ['wrong family', staticFontFixture({ names: { 1: 'Other Sans' } })],
+    ['wrong subfamily', staticFontFixture({ names: { 2: 'Regular' } })],
+    ['missing name table', staticFontFixture({ missingTable: 'name' })],
+    ['malformed name offset', staticFontFixture({ malformedNameOffset: true })],
+    ['malformed UTF-16BE', staticFontFixture({ malformedUtf16: true })],
+    ['duplicate selected name', staticFontFixture({ duplicateNameId: 6 })],
+    ['conflicting selected name', staticFontFixture({ duplicateNameId: 6, duplicateNameValue: 'Conflicting-Name' })],
+    ['wrong weight class', staticFontFixture({ weight: 400 })],
+    ['wrong width class', staticFontFixture({ width: 4 })],
+    ['missing OS/2 bold style', staticFontFixture({ selection: 0x0080 })],
+    ['missing head bold style', staticFontFixture({ macStyle: 0x0000 })],
+    ['wrong glyph count', staticFontFixture({ glyphCount: 4514 })],
+    ['missing required table', staticFontFixture({ missingTable: 'GPOS' })],
+    ['fvar present', staticFontFixture({ variableTable: 'fvar' })],
+    ['gvar present', staticFontFixture({ variableTable: 'gvar' })]
+  ];
+  const truncatedDirectory = valid.subarray(0, 20); cases.push(['truncated table directory', truncatedDirectory]);
+  const outOfRange = Buffer.from(valid); outOfRange.writeUInt32BE(outOfRange.length + 1, tableDirectoryEntry(outOfRange, 'cmap') + 8);
+  cases.push(['out-of-range table offset', outOfRange]);
+  for (const [name, fixture] of cases) await t.test(name, () => fails(() => validate(fixture), 'font_invalid'));
+  const expectedHashes = { ffmpeg: '47f90e890b4fd06605f708791b3b6f3635c0ac65af001936e7bf364f8e25d089',
+    ffprobe: '256459de6566608a65f4d1b6e42ea3cdac39ad472e69baafdca103252bdfb228',
+    freetype: '4c7336efdb382de3513e2532b547d5f747bd6660a37905737d0e6f7655173537',
+    harfbuzz: 'bb764b49def39b96640b81f136f8df0fec46bac9a2109b95dd9da0d66ca5fef3',
+    openh264: '4f74bc5e8f8b18ae3816aef71748175131a2a17d82099742fb4284bee05b0037',
+    sourceFont: 'bfb7bb691513f12e734dc346c03a03f784912432d7e3fa8e56efcf906fe86b3d',
+    font: '3a08a47daa00cade516425c15c57615aef2fd418ec9811a7b9f465088f92cc05',
+    fontMetrics: '82f5cf116ef6d0434809acf607b24784987a536a2111f212a7aa9d9357c44e11' };
+  const observation = { hashes: { ...expectedHashes, font: hash('0') }, ffmpegVersion: '8.1.2', ffprobeVersion: '8.1.2',
+    buildConfiguration: [...PHASE_TWO_BUILD_CONFIGURATION], capabilities: ['libopenh264', 'aac', 'drawtext', 'scale', 'pad', 'trim', 'setpts',
+      'concat', 'atrim', 'apad', 'asetpts', 'mp4', 'file', 'pipe'], ordinaryArtifacts: true, unexpectedConfiguration: false };
+  fails(() => trustedLocalRuntimeModule.validateTrustedLocalObservationForTestOnly(observation), 'font_invalid');
 });
 
 test('trusted-local lineage is unique and bounded hashing rejects growth and early close', async () => {
