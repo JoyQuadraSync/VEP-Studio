@@ -1,9 +1,13 @@
 import { RenderingPhaseTwoFailure } from '../failures/rendering-phase-two-failure';
 
 export interface MediaInspectionResult {
-  readonly container: 'mp4'; readonly byteLength: number; readonly width: number; readonly height: number;
-  readonly frameRate: 30; readonly constantFrameRate: true; readonly durationSeconds: number;
-  readonly streams: readonly ['video', 'audio']; readonly videoCodecFamily: 'h264'; readonly audioCodecFamily: 'aac';
+  readonly container: 'mp4'; readonly formatName: 'mov,mp4,m4a,3gp,3g2,mj2'; readonly byteLength: number;
+  readonly width: 1080; readonly height: 1920; readonly frameRate: 30; readonly constantFrameRate: true;
+  readonly durationSeconds: number; readonly streams: readonly ['video', 'audio']; readonly streamIndexes: readonly [0, 1];
+  readonly videoCodecFamily: 'h264'; readonly videoProfile: 'Constrained Baseline'; readonly videoLevel: 42;
+  readonly pixelFormat: 'yuv420p'; readonly videoDurationSeconds: number;
+  readonly audioCodecFamily: 'aac'; readonly audioProfile: 'LC'; readonly audioSampleRate: 48000;
+  readonly audioChannels: 2; readonly audioDurationSeconds: number;
 }
 export interface MediaInspector { inspect(outputPath: string): Promise<MediaInspectionResult> }
 

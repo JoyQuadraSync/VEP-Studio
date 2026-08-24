@@ -89,6 +89,18 @@ export function validateRuntimeCapabilityOutputForTestOnly(version: string, buil
 export async function hashChunksForTestOnly(chunks: readonly Buffer[], declaredSize: number): Promise<string> {
   try { return await hashReadable(Readable.from(chunks), declaredSize, MAX_ARTIFACT_BYTES); }
   catch { throw new RenderingPhaseTwoFailure('toolchain_invalid'); } }
+export function parseFfprobeMediaOutputForTestOnly(value: unknown): ReturnType<typeof parseFfprobeMediaOutput> {
+  return parseFfprobeMediaOutput(value);
+}
+/** Closed proof that JavaScript extra arguments cannot influence the fixed fixture descriptor source. */
+export function exerciseFirstControlledFixtureLoaderNonRedirectionForTestOnly(scenario: unknown): Readonly<{
+  acceptedFixedIdentity: true; callerMaterialConsumed: false; logicalIds: readonly string[]; sha256: readonly string[] }> {
+  if (scenario !== 'hostile_extra_arguments') throw new RenderingPhaseTwoFailure('asset_invalid');
+  const selected = Reflect.apply(firstFixtureDescriptors, undefined,
+    ['C:\\attacker', '0'.repeat(64), { root: 'C:\\alternate' }]) as typeof FIRST_FIXTURE;
+  return Object.freeze({ acceptedFixedIdentity: true, callerMaterialConsumed: false,
+    logicalIds: Object.freeze(selected.map((item) => item.logicalId)), sha256: Object.freeze(selected.map((item) => item.sha256)) });
+}
 
 const ROOT = 'C:\\Users\\Jiayi\\AppData\\Local\\VEP-Studio\\toolchain';
 const FFMPEG_ROOT = path.join(ROOT, 'install', 'ffmpeg', '8.1.2');
@@ -103,6 +115,15 @@ const PATHS = Object.freeze({
   font: path.join(ROOT, 'install', 'fonts', 'NotoSans-wght700-wdth100.ttf'),
   fontMetrics: path.join(ROOT, 'install', 'metrics', 'frozen-font-metrics.exe')
 });
+const FIRST_FIXTURE_ROOT = path.join(ROOT, 'fixtures', 'm4b-first-render');
+const FIRST_FIXTURE = Object.freeze([
+  Object.freeze({ logicalId: 'product-front', kind: 'image' as const, fileName: 'product-front.png',
+    sha256: 'c65ec5cab50d358c0eaec4f5b4d071beb04f0923f8c98582d4dc37904fd489ea' }),
+  Object.freeze({ logicalId: 'lace-base-close-up', kind: 'image' as const, fileName: 'lace-base-close-up.png',
+    sha256: '0eec9459e2e09584a789f34a8fcfa00d602f0830bc30fe5f5e80e7f3a17f6c47' }),
+  Object.freeze({ logicalId: 'approved-audio', kind: 'audio' as const, fileName: 'approved-audio.wav',
+    sha256: '990790c83918824382bf8a4da999a2fbf50f123fc1d78ffff7736fbb82e3aeb5' })
+]);
 const HASHES = Object.freeze({ ffmpeg: '47f90e890b4fd06605f708791b3b6f3635c0ac65af001936e7bf364f8e25d089',
   ffprobe: '256459de6566608a65f4d1b6e42ea3cdac39ad472e69baafdca103252bdfb228',
   freetype: '4c7336efdb382de3513e2532b547d5f747bd6660a37905737d0e6f7655173537',
@@ -197,6 +218,22 @@ export async function establishTrustedLocalRuntime(): Promise<TrustedLocalPrefli
     return Object.freeze({ environment, composition, verified: true });
   } catch (error) { if (error instanceof RenderingPhaseTwoFailure) throw error; throw new RenderingPhaseTwoFailure('toolchain_invalid'); }
 }
+/** Fixed first-engineering-fixture loader. It accepts no paths or hashes and issues no trust authority. */
+export async function loadFirstControlledFixtureAssets(): Promise<readonly Readonly<{
+  logicalId: string; kind: 'image' | 'audio'; byteLength: number; bytes: Buffer }>[] > {
+  try { const result: { logicalId: string; kind: 'image' | 'audio'; byteLength: number; bytes: Buffer }[] = [];
+    for (const expected of firstFixtureDescriptors()) {
+      const filePath = path.join(FIRST_FIXTURE_ROOT, expected.fileName); const info = await lstat(filePath);
+      if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || info.size <= 0 || info.size > MAX_ARTIFACT_BYTES ||
+          path.resolve(await realpath(filePath)) !== path.resolve(filePath)) throw new Error();
+      const bytes = await readFile(filePath);
+      if (bytes.length !== info.size || createHash('sha256').update(bytes).digest('hex') !== expected.sha256) throw new Error();
+      result.push(Object.freeze({ logicalId: expected.logicalId, kind: expected.kind, byteLength: bytes.length, bytes: Buffer.from(bytes) }));
+    }
+    return Object.freeze(result);
+  } catch { throw new RenderingPhaseTwoFailure('asset_invalid'); }
+}
+function firstFixtureDescriptors(): typeof FIRST_FIXTURE { return FIRST_FIXTURE; }
 function measureWorkspace(): { readonly freeWorkspaceBytes: number } { const info = statfsSync(ROOT, { bigint: true });
   const free = info.bavail * info.bsize; return Object.freeze({ freeWorkspaceBytes: free > BigInt(Number.MAX_SAFE_INTEGER) ? Number.MAX_SAFE_INTEGER : Number(free) }); }
 function supportsFrozenNotoScalar(codePoint: number): boolean {
@@ -244,17 +281,48 @@ function observeSync(filePath: string, expected: string): void {
   const bytes = readFileSync(filePath); if (bytes.length !== info.size || createHash('sha256').update(bytes).digest('hex') !== expected)
     throw new RenderingPhaseTwoFailure('font_invalid');
 }
-async function inspectMedia(outputPath: string): Promise<{ container: 'mp4'; byteLength: number; width: number; height: number; frameRate: 30;
-  constantFrameRate: true; durationSeconds: number; streams: readonly ['video', 'audio']; videoCodecFamily: 'h264'; audioCodecFamily: 'aac' }> {
+async function inspectMedia(outputPath: string): Promise<ReturnType<typeof parseFfprobeMediaOutput>> {
   await observe(PATHS.ffprobe, HASHES.ffprobe);
-  const output = await run(PATHS.ffprobe, ['-v', 'error', '-show_entries', 'format=duration,size:stream=codec_type,codec_name,width,height,r_frame_rate,avg_frame_rate',
-    '-of', 'json', outputPath]); const parsed = JSON.parse(output) as { format?: { duration?: string; size?: string }; streams?: { codec_type?: string;
-      codec_name?: string; width?: number; height?: number; r_frame_rate?: string; avg_frame_rate?: string }[] };
-  const video = parsed.streams?.find((item) => item.codec_type === 'video'); const audio = parsed.streams?.find((item) => item.codec_type === 'audio');
-  if (!video || !audio || video.codec_name !== 'h264' || audio.codec_name !== 'aac' || video.width !== 1080 || video.height !== 1920 ||
-      video.r_frame_rate !== '30/1' || video.avg_frame_rate !== '30/1') throw new RenderingPhaseTwoFailure('output_invalid');
-  return Object.freeze({ container: 'mp4', byteLength: Number(parsed.format?.size), width: 1080, height: 1920, frameRate: 30,
-    constantFrameRate: true, durationSeconds: Number(parsed.format?.duration), streams: ['video', 'audio'] as const, videoCodecFamily: 'h264', audioCodecFamily: 'aac' }); }
+  const output = await run(PATHS.ffprobe, ['-v', 'error', '-show_entries',
+    'format=format_name,duration,size:stream=index,codec_type,codec_name,profile,level,pix_fmt,width,height,r_frame_rate,avg_frame_rate,sample_rate,channels,duration',
+    '-of', 'json', outputPath]); return parseFfprobeMediaOutput(output); }
+function parseFfprobeMediaOutput(value: unknown) {
+  try {
+    if (typeof value !== 'string' || Buffer.byteLength(value, 'utf8') > MAX_OUTPUT_BYTES) throw new Error();
+    const root = JSON.parse(value) as unknown; if (!plainJsonObject(root)) throw new Error();
+    const rootKeys = Object.keys(root); if (!rootKeys.includes('streams') || !rootKeys.includes('format') ||
+      rootKeys.some((key) => !['programs', 'stream_groups', 'streams', 'format'].includes(key))) throw new Error();
+    if ('programs' in root && (!Array.isArray(root.programs) || root.programs.length !== 0)) throw new Error();
+    if ('stream_groups' in root && (!Array.isArray(root.stream_groups) || root.stream_groups.length !== 0)) throw new Error();
+    if (!Array.isArray(root.streams) || root.streams.length !== 2 || !plainJsonObject(root.format)) throw new Error();
+    const video = root.streams[0]; const audio = root.streams[1]; if (!plainJsonObject(video) || !plainJsonObject(audio)) throw new Error();
+    requireExactKeys(root.format, ['format_name', 'duration', 'size']);
+    requireExactKeys(video, ['index', 'codec_name', 'profile', 'codec_type', 'width', 'height', 'pix_fmt', 'level', 'r_frame_rate', 'avg_frame_rate', 'duration']);
+    requireExactKeys(audio, ['index', 'codec_name', 'profile', 'codec_type', 'sample_rate', 'channels', 'r_frame_rate', 'avg_frame_rate', 'duration']);
+    const duration = decimal(root.format.duration); const videoDuration = decimal(video.duration); const audioDuration = decimal(audio.duration);
+    const byteLength = integer(root.format.size);
+    if (root.format.format_name !== 'mov,mp4,m4a,3gp,3g2,mj2' || video.index !== 0 || video.codec_type !== 'video' ||
+      video.codec_name !== 'h264' || video.profile !== 'Constrained Baseline' || video.level !== 42 || video.pix_fmt !== 'yuv420p' ||
+      video.width !== 1080 || video.height !== 1920 || video.r_frame_rate !== '30/1' || video.avg_frame_rate !== '30/1' ||
+      audio.index !== 1 || audio.codec_type !== 'audio' || audio.codec_name !== 'aac' || audio.profile !== 'LC' ||
+      audio.sample_rate !== '48000' || audio.channels !== 2 || audio.r_frame_rate !== '0/0' || audio.avg_frame_rate !== '0/0') throw new Error();
+    return Object.freeze({ container: 'mp4' as const, formatName: 'mov,mp4,m4a,3gp,3g2,mj2' as const, byteLength,
+      width: 1080 as const, height: 1920 as const, frameRate: 30 as const, constantFrameRate: true as const, durationSeconds: duration,
+      streams: ['video', 'audio'] as const, streamIndexes: [0, 1] as const, videoCodecFamily: 'h264' as const,
+      videoProfile: 'Constrained Baseline' as const, videoLevel: 42 as const, pixelFormat: 'yuv420p' as const,
+      videoDurationSeconds: videoDuration, audioCodecFamily: 'aac' as const, audioProfile: 'LC' as const,
+      audioSampleRate: 48000 as const, audioChannels: 2 as const, audioDurationSeconds: audioDuration });
+  } catch { throw new RenderingPhaseTwoFailure('output_invalid'); }
+}
+function plainJsonObject(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null &&
+  !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype; }
+function requireExactKeys(value: Record<string, unknown>, expected: readonly string[]): void {
+  if (Object.keys(value).length !== expected.length || expected.some((key) => !(key in value))) throw new Error();
+}
+function decimal(value: unknown): number { if (typeof value !== 'string' || !/^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/u.test(value)) throw new Error();
+  const parsed = Number(value); if (!Number.isFinite(parsed) || parsed < 0) throw new Error(); return parsed; }
+function integer(value: unknown): number { if (typeof value !== 'string' || !/^[1-9][0-9]*$/u.test(value)) throw new Error();
+  const parsed = Number(value); if (!Number.isSafeInteger(parsed) || parsed <= 0) throw new Error(); return parsed; }
 function detachObservation(value: unknown): TrustedLocalObservation {
   try {
     if (typeof value !== 'object' || value === null || Object.getPrototypeOf(value) !== Object.prototype || Object.getOwnPropertySymbols(value).length)

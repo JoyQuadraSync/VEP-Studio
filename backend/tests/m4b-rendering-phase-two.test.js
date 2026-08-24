@@ -64,6 +64,11 @@ const tableDirectoryEntry = (font, tag) => { const count = font.readUInt16BE(4);
 const hash = character => character.repeat(64);
 const fails = (fn, code) => assert.throws(fn, error => error instanceof RenderingPhaseTwoFailure && error.code === code);
 const rejects = (promise, code) => assert.rejects(promise, error => error instanceof RenderingPhaseTwoFailure && error.code === code);
+const validInspection = (byteLength, durationSeconds = 30) => ({ container: 'mp4', formatName: 'mov,mp4,m4a,3gp,3g2,mj2',
+  byteLength, width: 1080, height: 1920, frameRate: 30, constantFrameRate: true, durationSeconds,
+  streams: ['video', 'audio'], streamIndexes: [0, 1], videoCodecFamily: 'h264', videoProfile: 'Constrained Baseline',
+  videoLevel: 42, pixelFormat: 'yuv420p', videoDurationSeconds: durationSeconds, audioCodecFamily: 'aac', audioProfile: 'LC',
+  audioSampleRate: 48000, audioChannels: 2, audioDurationSeconds: durationSeconds });
 async function phaseOneFixture() {
   const pkg = await createVoluviaVideoPackageOperation({ generatePackageCandidate: async () => clientResult() },
     { now: () => new Date('2026-08-06T12:00:00.000Z') })({ stepInput: input() });
@@ -830,8 +835,7 @@ async function orchestrationHarness(overrides = {}) {
   const output = Buffer.from('synthetic-mp4-fixture');
   const processRunner = overrides.processRunner ?? { async run(command) { processCalls += 1; await writeFile(command.outputPaths[0], output); return { exitCode: 0 }; } };
   const inspectorDelegate = overrides.inspector ?? { async inspect(outputPath) { const bytes = await readFile(outputPath);
-    return { container: 'mp4', byteLength: bytes.length, width: 1080, height: 1920, frameRate: 30,
-      constantFrameRate: true, durationSeconds: 30, streams: ['video', 'audio'], videoCodecFamily: 'h264', audioCodecFamily: 'aac' }; } };
+    return validInspection(bytes.length); } };
   const inspector = TrustedMediaInspector.createTestOnly({ async inspect(outputPath) { inspectionCalls += 1; return inspectorDelegate.inspect(outputPath); } });
   const environment = TrustedPhaseTwoEnvironment.createTestOnly(metadata(), expectations());
   const request = { phaseOne, assets: [
@@ -852,10 +856,8 @@ test('trusted issued-file inspection, not declared metadata, controls video dura
     { name: 'measured exactly assigned duration', declared: 30, measured: 15, accepted: true }]) {
     await t.test(scenario.name, async () => { let inspectedInputPath; const harness = await orchestrationHarness({ inspector: { async inspect(filePath) {
       const bytes = await readFile(filePath); if (!filePath.endsWith('fixture.mp4')) { inspectedInputPath = filePath;
-        return { container: 'mp4', byteLength: bytes.length, width: 1080, height: 1920, frameRate: 30, constantFrameRate: true,
-          durationSeconds: scenario.measured, streams: ['video', 'audio'], videoCodecFamily: 'h264', audioCodecFamily: 'aac' }; }
-      return { container: 'mp4', byteLength: bytes.length, width: 1080, height: 1920, frameRate: 30, constantFrameRate: true,
-        durationSeconds: 30, streams: ['video', 'audio'], videoCodecFamily: 'h264', audioCodecFamily: 'aac' }; } } });
+        return validInspection(bytes.length, scenario.measured); }
+      return validInspection(bytes.length); } } });
       const assets = harness.request.assets.map(asset => asset.logicalId === 'product-front' ?
         { ...asset, kind: 'video', durationSeconds: scenario.declared } : asset);
       try { if (scenario.accepted) await renderDeterministicFixture({ ...harness.request, assets }, harness.composition);
@@ -864,6 +866,85 @@ test('trusted issued-file inspection, not declared metadata, controls video dura
       } finally { await rm(harness.appRoot, { recursive: true, force: true }); }
     });
   }
+});
+
+const validProbeJson = overrides => JSON.stringify({ programs: [], stream_groups: [], streams: [
+  { index: 0, codec_name: 'h264', profile: 'Constrained Baseline', codec_type: 'video', width: 1080, height: 1920,
+    pix_fmt: 'yuv420p', level: 42, r_frame_rate: '30/1', avg_frame_rate: '30/1', duration: '30.000000', ...(overrides?.video ?? {}) },
+  { index: 1, codec_name: 'aac', profile: 'LC', codec_type: 'audio', sample_rate: '48000', channels: 2,
+    r_frame_rate: '0/0', avg_frame_rate: '0/0', duration: '30.000000', ...(overrides?.audio ?? {}) },
+  ...(overrides?.extraStreams ?? [])], format: { format_name: 'mov,mp4,m4a,3gp,3g2,mj2', duration: '30.000000', size: '21',
+    ...(overrides?.format ?? {}) } });
+
+test('strict FFprobe JSON parser accepts only the frozen ordered MP4 output contract', async t => {
+  const parse = trustedLocalRuntimeModule.parseFfprobeMediaOutputForTestOnly;
+  const accepted = parse(validProbeJson()); assert.deepEqual(accepted.streamIndexes, [0, 1]); assert.equal(accepted.audioSampleRate, 48000);
+  const cases = [
+    ['wrong format', { format: { format_name: 'matroska,webm' } }],
+    ['extra stream', { extraStreams: [{ index: 2, codec_type: 'data' }] }],
+    ['reversed stream order', { video: { index: 1, codec_type: 'audio' }, audio: { index: 0, codec_type: 'video' } }],
+    ['wrong video index', { video: { index: 2 } }], ['wrong audio index', { audio: { index: 2 } }],
+    ['wrong video profile', { video: { profile: 'High' } }], ['wrong level', { video: { level: 41 } }],
+    ['wrong pixel format', { video: { pix_fmt: 'yuv444p' } }], ['wrong width', { video: { width: 1079 } }],
+    ['wrong height', { video: { height: 1919 } }], ['wrong real frame rate', { video: { r_frame_rate: '30000/1001' } }],
+    ['wrong average frame rate', { video: { avg_frame_rate: '30000/1001' } }],
+    ['wrong audio profile', { audio: { profile: 'HE-AAC' } }], ['wrong sample rate', { audio: { sample_rate: '44100' } }],
+    ['wrong channel count', { audio: { channels: 1 } }], ['zero size', { format: { size: '0' } }],
+    ['unsafe size', { format: { size: '9007199254740992' } }]
+  ];
+  for (const [name, changes] of cases) await t.test(name, () => fails(() => parse(validProbeJson(changes)), 'output_invalid'));
+  await t.test('malformed numeric string', () => fails(() => parse(validProbeJson({ format: { duration: '30 seconds' } })), 'output_invalid'));
+  await t.test('unexpected structural field', () => fails(() => parse(JSON.stringify({ ...JSON.parse(validProbeJson()), unexpected: true })), 'output_invalid'));
+});
+
+test('frozen first-controlled fixture digest set is exact and caller cannot redirect its zero-input loader', () => {
+  const validate = require('../dist/rendering/phase-two/fixture/deterministic-render-fixture').validateFirstControlledFixtureAssetsForTestOnly;
+  const expected = [
+    { logicalId: 'product-front', sha256: 'c65ec5cab50d358c0eaec4f5b4d071beb04f0923f8c98582d4dc37904fd489ea' },
+    { logicalId: 'lace-base-close-up', sha256: '0eec9459e2e09584a789f34a8fcfa00d602f0830bc30fe5f5e80e7f3a17f6c47' },
+    { logicalId: 'approved-audio', sha256: '990790c83918824382bf8a4da999a2fbf50f123fc1d78ffff7736fbb82e3aeb5' }
+  ];
+  assert.equal(validate('valid'), 'accepted');
+  for (const scenario of ['product_front_substituted', 'lace_base_substituted', 'audio_substituted'])
+    assert.equal(validate(scenario), 'asset_invalid');
+  assert.equal(trustedLocalRuntimeModule.loadFirstControlledFixtureAssets.length, 0);
+  const nonRedirected = trustedLocalRuntimeModule.exerciseFirstControlledFixtureLoaderNonRedirectionForTestOnly('hostile_extra_arguments');
+  assert.deepEqual(nonRedirected, { acceptedFixedIdentity: true, callerMaterialConsumed: false,
+    logicalIds: expected.map((item) => item.logicalId), sha256: expected.map((item) => item.sha256) });
+});
+
+test('fixture rejects duration and local/probe size mismatch after processing and still cleans its workspace', async t => {
+  for (const scenario of [
+    { name: 'format duration mismatch', change: value => ({ ...value, durationSeconds: 29 }) },
+    { name: 'video duration mismatch', change: value => ({ ...value, videoDurationSeconds: 29 }) },
+    { name: 'audio duration mismatch', change: value => ({ ...value, audioDurationSeconds: 29 }) },
+    { name: 'local and probe size mismatch', change: value => ({ ...value, byteLength: value.byteLength + 1 }) }
+  ]) await t.test(scenario.name, async () => { const harness = await orchestrationHarness({ inspector: { async inspect(outputPath) {
+      const bytes = await readFile(outputPath); return scenario.change(validInspection(bytes.length)); } } });
+    try { await rejects(renderDeterministicFixture(harness.request, harness.composition), 'output_invalid');
+      assert.deepEqual(harness.counts(), { processCalls: 1, cleanupCalls: 1 });
+    } finally { await rm(harness.appRoot, { recursive: true, force: true }); } });
+});
+
+test('first-controlled retention is byte-identical, hash-bound, idempotent, and conflict-closed', async () => {
+  const exercise = require('../dist/rendering/phase-two/fixture/deterministic-render-fixture').exerciseFirstControlledRetentionForTestOnly;
+  const retained = await exercise('retained'); assert.deepEqual(retained, { outcome: 'retained', byteIdentical: true, hashMatches: true });
+  const idempotent = await exercise('idempotent'); assert.deepEqual(idempotent, { outcome: 'idempotent', byteIdentical: true, hashMatches: true });
+  const conflict = await exercise('different_existing'); assert.deepEqual(conflict,
+    { outcome: 'workspace_invalid', byteIdentical: false, hashMatches: false });
+});
+
+test('first-controlled completion sequence retains only validated output and always cleans up', async t => {
+  const exercise = require('../dist/rendering/phase-two/fixture/deterministic-render-fixture').exerciseFirstControlledCompletionSequenceForTestOnly;
+  await t.test('valid output', async () => { const result = await exercise('valid_output');
+    assert.deepEqual(result, { outcome: 'rendered', events: ['process', 'hash', 'inspect', 'validate', 'retain', 'production_cleanup'],
+      retentionInvocationCount: 1, cleanupInvocationCount: 1, productionEligibility: 'prohibited' }); });
+  await t.test('invalid output', async () => { const result = await exercise('invalid_output');
+    assert.deepEqual(result, { outcome: 'output_invalid', events: ['process', 'hash', 'inspect', 'validate', 'production_cleanup'],
+      retentionInvocationCount: 0, cleanupInvocationCount: 1 }); });
+  await t.test('retention failure', async () => { const result = await exercise('retention_failure');
+    assert.deepEqual(result, { outcome: 'workspace_invalid', events: ['process', 'hash', 'inspect', 'validate', 'retain', 'production_cleanup'],
+      retentionInvocationCount: 1, cleanupInvocationCount: 1 }); });
 });
 
 test('input-video inspector failure is closed and prevents process invocation', async () => {
@@ -980,9 +1061,7 @@ test('successful fixture result is not replaced when operational cleanup fails',
 test('inspector observes the actual resolver-issued output path', async () => {
   let inspectedPath;
   const harness = await orchestrationHarness({ inspector: { async inspect(outputPath) { inspectedPath = outputPath;
-    const bytes = await readFile(outputPath); return { container: 'mp4', byteLength: bytes.length, width: 1080, height: 1920,
-      frameRate: 30, constantFrameRate: true, durationSeconds: 30, streams: ['video', 'audio'],
-      videoCodecFamily: 'h264', audioCodecFamily: 'aac' }; } } });
+    const bytes = await readFile(outputPath); return validInspection(bytes.length); } } });
   try { await renderDeterministicFixture(harness.request, harness.composition);
     assert.match(inspectedPath, /fixture\.mp4$/); assert.equal(path.isAbsolute(inspectedPath), true);
   } finally { await rm(harness.appRoot, { recursive: true, force: true }); }
