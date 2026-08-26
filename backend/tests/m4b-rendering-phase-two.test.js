@@ -24,8 +24,10 @@ const mediaInspectionModule = require('../dist/rendering/phase-two/inspection/me
 const { getTrustedInputVideoDuration, getTrustedMediaInspector, TrustedInputVideoInspection,
   TrustedMediaInspector } = mediaInspectionModule;
 const processRunnerModule = require('../dist/rendering/phase-two/process/ffmpeg-process-runner');
-const { diagnoseProcessFailureForTestOnly, exerciseProcessFailureClassificationForTestOnly,
-  exerciseRegisteredProcessFailureForTestOnly, NodeFfmpegProcessRunner, simulateWindowsTerminationTestOnly, unixProcessGroupTargetTestOnly,
+const { diagnoseNonzeroExitCauseForTestOnly, diagnoseProcessFailureForTestOnly,
+  exerciseNonzeroExitCauseClassificationForTestOnly, exerciseProcessFailureClassificationForTestOnly,
+  exerciseRegisteredNonzeroExitCauseForTestOnly, exerciseRegisteredProcessFailureForTestOnly,
+  exerciseStderrLimitNonzeroCollisionForTestOnly, NodeFfmpegProcessRunner, simulateWindowsTerminationTestOnly, unixProcessGroupTargetTestOnly,
   windowsTaskkillArgsTestOnly } = processRunnerModule;
 const trustedLocalRuntimeModule = require('../dist/rendering/phase-two/runtime/trusted-local-runtime');
 
@@ -914,6 +916,91 @@ test('process diagnostics are identity-bound to failures from the shared product
     assert.deepEqual(diagnoseProcessFailureForTestOnly(unavailable), { available: false });
   assert.equal(diagnoseProcessFailureForTestOnly.length, 1);
   assert.equal(exerciseRegisteredProcessFailureForTestOnly.length, 1);
+});
+
+test('closed nonzero-exit classifier uses fixed bounded fixtures and deterministic precedence', async t => {
+  const cases = [
+    ['resource_or_io', 'resource_or_io'],
+    ['invalid_option', 'invalid_option'],
+    ['drawtext_or_font', 'drawtext_or_font'],
+    ['input_open_or_decode', 'input_open_or_decode'],
+    ['filtergraph_parse_or_init', 'filtergraph_parse_or_init'],
+    ['encoder_initialization', 'encoder_initialization'],
+    ['muxer_or_output', 'muxer_or_output'],
+    ['unknown_nonzero_exit', 'unknown_nonzero_exit'],
+    ['split_marker_across_chunks', 'muxer_or_output'],
+    ['generic_invalid_argument_only', 'unknown_nonzero_exit']
+  ];
+  for (const [scenario, causeFamily] of cases) await t.test(scenario, () => {
+    const result = exerciseNonzeroExitCauseClassificationForTestOnly(scenario);
+    assert.deepEqual(result, { causeFamily }); assert.equal(Object.isFrozen(result), true);
+    assert.deepEqual(Object.keys(result), ['causeFamily']);
+  });
+  assert.equal(exerciseNonzeroExitCauseClassificationForTestOnly('resource_or_io').causeFamily, 'resource_or_io',
+    'resource marker wins over the invalid-option marker in the internally owned precedence fixture');
+  for (const hostile of [undefined, null, '', 'error', 'failed', {}, [], Buffer.from('Could not write header'),
+    { scenario: 'muxer_or_output' }, 'C:\\ffmpeg.exe', ['-i'], { PATH: 'hostile' }])
+    fails(() => exerciseNonzeroExitCauseClassificationForTestOnly(hostile), 'process_failed');
+  assert.equal(exerciseNonzeroExitCauseClassificationForTestOnly.length, 1);
+});
+
+test('nonzero-exit cause is bound only to the exact shared failure object', async t => {
+  const families = ['resource_or_io', 'invalid_option', 'drawtext_or_font', 'input_open_or_decode',
+    'filtergraph_parse_or_init', 'encoder_initialization', 'muxer_or_output', 'unknown_nonzero_exit'];
+  for (const scenario of families) await t.test(scenario, () => {
+    let failure;
+    try { exerciseRegisteredNonzeroExitCauseForTestOnly(scenario); } catch (error) { failure = error; }
+    assert.ok(failure instanceof RenderingPhaseTwoFailure); assert.equal(failure.code, 'process_failed');
+    assert.deepEqual(diagnoseProcessFailureForTestOnly(failure), { available: true, subcategory: 'nonzero_exit' });
+    assert.deepEqual(diagnoseNonzeroExitCauseForTestOnly(failure), { available: true, causeFamily: scenario });
+    assert.deepEqual(Object.keys(failure).sort(), ['code', 'name']);
+    assert.equal('causeFamily' in failure, false); assert.equal('stderr' in failure, false);
+    for (const forged of [new Error(), { ...failure }, JSON.parse(JSON.stringify(failure)),
+      Object.assign(Object.create(Object.getPrototypeOf(failure)), failure), { code: failure.code },
+      Object.freeze({ code: failure.code, name: failure.name })])
+      assert.deepEqual(diagnoseNonzeroExitCauseForTestOnly(forged), { available: false });
+  });
+  for (const scenario of ['spawn_error', 'signal', 'timeout', 'stderr_limit', 'process_adapter']) await t.test(`unavailable-${scenario}`, () => {
+    let failure;
+    try { exerciseRegisteredProcessFailureForTestOnly(scenario); } catch (error) { failure = error; }
+    assert.deepEqual(diagnoseNonzeroExitCauseForTestOnly(failure), { available: false });
+  });
+  for (const unavailable of [undefined, null, '', 1, Symbol('failure'), () => {}])
+    assert.deepEqual(diagnoseNonzeroExitCauseForTestOnly(unavailable), { available: false });
+  assert.equal(diagnoseNonzeroExitCauseForTestOnly.length, 1);
+  assert.equal(exerciseRegisteredNonzeroExitCauseForTestOnly.length, 1);
+});
+
+test('nonzero-exit cause diagnostics preserve public failure and stderr-limit contracts', () => {
+  assert.deepEqual(exerciseProcessFailureClassificationForTestOnly('stderr_limit'),
+    { outcome: 'process_failed', subcategory: 'stderr_limit' });
+  let failure;
+  try { exerciseRegisteredNonzeroExitCauseForTestOnly('split_marker_across_chunks'); } catch (error) { failure = error; }
+  assert.equal(failure.code, 'process_failed');
+  assert.deepEqual(Object.keys(failure).sort(), ['code', 'name']);
+  const diagnostic = diagnoseNonzeroExitCauseForTestOnly(failure);
+  assert.deepEqual(diagnostic, { available: true, causeFamily: 'muxer_or_output' });
+  assert.equal('stderr' in diagnostic, false); assert.equal('bytes' in diagnostic, false); assert.equal('path' in diagnostic, false);
+});
+
+test('stderr containment overrides nonzero exit and prevents cause-family registration', () => {
+  let failure;
+  try { exerciseStderrLimitNonzeroCollisionForTestOnly(); } catch (error) { failure = error; }
+  assert.ok(failure instanceof RenderingPhaseTwoFailure); assert.equal(failure.code, 'process_failed');
+  assert.deepEqual(diagnoseProcessFailureForTestOnly(failure), { available: true, subcategory: 'stderr_limit' });
+  assert.deepEqual(diagnoseNonzeroExitCauseForTestOnly(failure), { available: false });
+  assert.deepEqual(Object.keys(failure).sort(), ['code', 'name']);
+  assert.equal('causeFamily' in failure, false); assert.equal('stderr' in failure, false);
+  assert.equal(exerciseStderrLimitNonzeroCollisionForTestOnly.length, 0);
+  let ordinaryNonzero;
+  try { exerciseRegisteredNonzeroExitCauseForTestOnly('muxer_or_output'); } catch (error) { ordinaryNonzero = error; }
+  assert.deepEqual(diagnoseProcessFailureForTestOnly(ordinaryNonzero), { available: true, subcategory: 'nonzero_exit' });
+  assert.deepEqual(diagnoseNonzeroExitCauseForTestOnly(ordinaryNonzero),
+    { available: true, causeFamily: 'muxer_or_output' });
+  let unknownNonzero;
+  try { exerciseRegisteredNonzeroExitCauseForTestOnly('unknown_nonzero_exit'); } catch (error) { unknownNonzero = error; }
+  assert.deepEqual(diagnoseNonzeroExitCauseForTestOnly(unknownNonzero),
+    { available: true, causeFamily: 'unknown_nonzero_exit' });
 });
 
 async function orchestrationHarness(overrides = {}) {
