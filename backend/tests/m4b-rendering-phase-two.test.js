@@ -24,7 +24,8 @@ const mediaInspectionModule = require('../dist/rendering/phase-two/inspection/me
 const { getTrustedInputVideoDuration, getTrustedMediaInspector, TrustedInputVideoInspection,
   TrustedMediaInspector } = mediaInspectionModule;
 const processRunnerModule = require('../dist/rendering/phase-two/process/ffmpeg-process-runner');
-const { NodeFfmpegProcessRunner, simulateWindowsTerminationTestOnly, unixProcessGroupTargetTestOnly,
+const { diagnoseProcessFailureForTestOnly, exerciseProcessFailureClassificationForTestOnly,
+  exerciseRegisteredProcessFailureForTestOnly, NodeFfmpegProcessRunner, simulateWindowsTerminationTestOnly, unixProcessGroupTargetTestOnly,
   windowsTaskkillArgsTestOnly } = processRunnerModule;
 const trustedLocalRuntimeModule = require('../dist/rendering/phase-two/runtime/trusted-local-runtime');
 
@@ -862,6 +863,57 @@ test('process-runner exports contain no raw executable test adapter or arbitrary
     assert.equal(typeof value === 'object' && value !== null && typeof value.execute === 'function', false);
     assert.equal(typeof value === 'object' && value !== null && typeof value.spawn === 'function', false);
   }
+});
+
+test('closed process-failure seam shares production classification without process authority', async t => {
+  const cases = [
+    ['spawn_error', 'process_failed'],
+    ['nonzero_exit', 'process_failed'],
+    ['signal', 'process_failed'],
+    ['timeout', 'process_timeout'],
+    ['stderr_limit', 'process_failed'],
+    ['process_adapter', 'process_failed']
+  ];
+  for (const [scenario, outcome] of cases) await t.test(scenario, () => {
+    assert.deepEqual(exerciseProcessFailureClassificationForTestOnly(scenario), { outcome, subcategory: scenario });
+  });
+  for (const hostile of [undefined, null, '', 'stdout_limit', 'invalid_result', {}, [], () => {},
+    { scenario: 'spawn_error' }, 'C:\\ffmpeg.exe', ['-i'], { PATH: 'hostile' }])
+    fails(() => exerciseProcessFailureClassificationForTestOnly(hostile), 'process_failed');
+  assert.equal(exerciseProcessFailureClassificationForTestOnly.length, 1);
+  assert.equal(NodeFfmpegProcessRunner.length, 0);
+  assert.deepEqual(Object.getOwnPropertyNames(NodeFfmpegProcessRunner.prototype).sort(), ['constructor', 'run']);
+  for (const result of cases.map(([scenario]) => exerciseProcessFailureClassificationForTestOnly(scenario))) {
+    assert.equal(Object.isFrozen(result), true);
+    assert.equal('run' in result, false); assert.equal('execute' in result, false); assert.equal('spawn' in result, false);
+    assert.equal('path' in result, false); assert.equal('args' in result, false); assert.equal('env' in result, false);
+  }
+});
+
+test('process diagnostics are identity-bound to failures from the shared production construction path', async t => {
+  const cases = [
+    ['spawn_error', 'process_failed'],
+    ['nonzero_exit', 'process_failed'],
+    ['signal', 'process_failed'],
+    ['timeout', 'process_timeout'],
+    ['stderr_limit', 'process_failed'],
+    ['process_adapter', 'process_failed']
+  ];
+  for (const [scenario, code] of cases) await t.test(scenario, () => {
+    let failure;
+    try { exerciseRegisteredProcessFailureForTestOnly(scenario); } catch (error) { failure = error; }
+    assert.ok(failure instanceof RenderingPhaseTwoFailure); assert.equal(failure.code, code);
+    assert.deepEqual(diagnoseProcessFailureForTestOnly(failure), { available: true, subcategory: scenario });
+    assert.deepEqual(Object.keys(failure).sort(), ['code', 'name']);
+    assert.equal('subcategory' in failure, false);
+    for (const forged of [new Error(), { ...failure }, JSON.parse(JSON.stringify(failure)),
+      Object.assign(Object.create(Object.getPrototypeOf(failure)), failure), { code }, Object.freeze({ code, name: failure.name })])
+      assert.deepEqual(diagnoseProcessFailureForTestOnly(forged), { available: false });
+  });
+  for (const unavailable of [undefined, null, '', 1, Symbol('failure'), () => {}])
+    assert.deepEqual(diagnoseProcessFailureForTestOnly(unavailable), { available: false });
+  assert.equal(diagnoseProcessFailureForTestOnly.length, 1);
+  assert.equal(exerciseRegisteredProcessFailureForTestOnly.length, 1);
 });
 
 async function orchestrationHarness(overrides = {}) {
