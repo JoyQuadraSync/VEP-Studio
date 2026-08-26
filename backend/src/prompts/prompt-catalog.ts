@@ -42,6 +42,12 @@ import {
   VOLUVIA_VIDEO_PACKAGE_DE_V4_PROMPT_SHA256,
   VOLUVIA_VIDEO_PACKAGE_DE_V4_PROMPT_VERSION
 } from './voluvia/de/video-package-generator-v4.prompt';
+import {
+  VOLUVIA_VIDEO_PACKAGE_DE_V5_PROMPT,
+  VOLUVIA_VIDEO_PACKAGE_DE_V5_PROMPT_ID,
+  VOLUVIA_VIDEO_PACKAGE_DE_V5_PROMPT_SHA256,
+  VOLUVIA_VIDEO_PACKAGE_DE_V5_PROMPT_VERSION
+} from './voluvia/de/video-package-generator-v5.prompt';
 
 export interface PromptCatalog {
   resolve(reference: PromptReference): ResolvedPrompt | undefined;
@@ -134,6 +140,16 @@ export class StaticPromptCatalog implements PromptCatalog {
       content: canonicalizePromptContent(VOLUVIA_VIDEO_PACKAGE_DE_V4_PROMPT),
       sha256: videoPackageV4Sha256
     });
+    const videoPackageV5Sha256 = hashPromptContent(VOLUVIA_VIDEO_PACKAGE_DE_V5_PROMPT);
+    if (videoPackageV5Sha256 !== VOLUVIA_VIDEO_PACKAGE_DE_V5_PROMPT_SHA256) {
+      throw new Error('Video package v5 prompt content does not match its pinned SHA-256 hash.');
+    }
+    const videoPackageV5Prompt = Object.freeze({
+      promptId: VOLUVIA_VIDEO_PACKAGE_DE_V5_PROMPT_ID,
+      promptVersion: VOLUVIA_VIDEO_PACKAGE_DE_V5_PROMPT_VERSION,
+      content: canonicalizePromptContent(VOLUVIA_VIDEO_PACKAGE_DE_V5_PROMPT),
+      sha256: videoPackageV5Sha256
+    });
     this.prompts = new Map<string, ResolvedPrompt>([
       [this.key(prompt), prompt],
       [this.key(plannerPrompt), plannerPrompt],
@@ -141,7 +157,8 @@ export class StaticPromptCatalog implements PromptCatalog {
       [this.key(videoPackagePrompt), videoPackagePrompt],
       [this.key(videoPackageV2Prompt), videoPackageV2Prompt],
       [this.key(videoPackageV3Prompt), videoPackageV3Prompt],
-      [this.key(videoPackageV4Prompt), videoPackageV4Prompt]
+      [this.key(videoPackageV4Prompt), videoPackageV4Prompt],
+      [this.key(videoPackageV5Prompt), videoPackageV5Prompt]
     ]);
   }
 

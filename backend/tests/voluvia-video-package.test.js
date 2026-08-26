@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const OpenAI = require('openai');
 const contracts = require('../dist/workflows/examples/voluvia/video-package/voluvia-video-package-contracts');
 const planner = require('../dist/workflows/examples/voluvia/planner/voluvia-content-planner-contracts');
@@ -8,12 +10,13 @@ const packagePromptV1 = require('../dist/prompts/voluvia/de/video-package-genera
 const packagePromptV2 = require('../dist/prompts/voluvia/de/video-package-generator-v2.prompt');
 const packagePromptV3 = require('../dist/prompts/voluvia/de/video-package-generator-v3.prompt');
 const packagePrompt = require('../dist/prompts/voluvia/de/video-package-generator-v4.prompt');
+const packagePromptV5 = require('../dist/prompts/voluvia/de/video-package-generator-v5.prompt');
 const compatibility = require('../dist/workflows/examples/voluvia/video-package/voluvia-video-package-compatibility');
 const { StaticPromptCatalog, hashPromptContent } = require('../dist/prompts/prompt-catalog');
-const { createVoluviaVideoPackageOperation } = require('../dist/workflows/examples/voluvia/video-package/voluvia-video-package.operation');
+const { createVoluviaVideoPackageOperation, createVoluviaVideoPackageV2Operation } = require('../dist/workflows/examples/voluvia/video-package/voluvia-video-package.operation');
 const { validateVideoPackageInput, validateVideoPackageClientResult,
   validateAndDeriveCandidate, validateFinalVideoPackage, deriveEffectiveVideoFacts,
-  VideoPackageLocalValidationFailure } = require('../dist/workflows/examples/voluvia/video-package/voluvia-video-package-validator');
+  hashVideoPackageValue, VideoPackageLocalValidationFailure } = require('../dist/workflows/examples/voluvia/video-package/voluvia-video-package-validator');
 const { OpenAiResponsesVideoPackageGenerationClient, OpenAiVideoPackageDiagnosticFailure } = require('../dist/integrations/openai/openai-responses-video-package-generation-client');
 const { VideoPackageProviderFailure } = require('../dist/integrations/ai/video-package-generation-client');
 
@@ -67,10 +70,26 @@ function candidate() {
 function clientResult(overrides = {}) {
   return { candidate: candidate(), provenance: { provider: 'fake', model: 'offline-model', promptId: contracts.VOLUVIA_VIDEO_PACKAGE_PROMPT_REFERENCE.promptId, promptVersion: 4, promptContentHash: packagePrompt.VOLUVIA_VIDEO_PACKAGE_DE_V4_PROMPT_SHA256 }, diagnostics: { provider: 'fake', model: 'offline-model', requestAttempted: true, responseId: 'safe-response', usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 } }, ...overrides };
 }
+function clientResultV5() {
+  const result = clientResult();
+  result.provenance = { ...result.provenance, promptVersion: 5,
+    promptContentHash: packagePromptV5.VOLUVIA_VIDEO_PACKAGE_DE_V5_PROMPT_SHA256 };
+  result.candidate.voiceover.segments[0].spokenText = 'Ein Hair Topper ergänzt\ndein eigenes Haar sanft.\nDie leichte Lace Basis\nganz nah zu sehen.';
+  result.candidate.voiceover.segments[1].spokenText = 'Drei Clips siehst du\nruhig und klar im Bild.\nDu siehst den Einsatz\nim Alltag ruhig und klar.';
+  return result;
+}
 async function run(value = input(), result = clientResult(), observer) {
   let calls = 0;
   const handler = createVoluviaVideoPackageOperation({ generatePackageCandidate: async () => { calls++; return structuredClone(result); } }, { now: () => new Date('2026-08-06T12:00:00.000Z') }, observer);
   const output = await handler({ executionId: 'x', workflowId: contracts.VOLUVIA_VIDEO_PACKAGE_WORKFLOW_ID, workflowVersion: 1, stepId: 'generate-video-package', workflowInput: value, stepInput: value });
+  return { output, calls };
+}
+async function runV5(value = input(), result = clientResultV5(), observer) {
+  let calls = 0;
+  const handler = createVoluviaVideoPackageV2Operation({ generatePackageCandidate: async () => { calls++; return structuredClone(result); } },
+    { now: () => new Date('2026-08-06T12:00:00.000Z') }, observer);
+  const output = await handler({ executionId: 'x', workflowId: contracts.VOLUVIA_VIDEO_PACKAGE_WORKFLOW_ID,
+    workflowVersion: 2, stepId: 'generate-video-package', workflowInput: value, stepInput: value });
   return { output, calls };
 }
 
@@ -179,6 +198,146 @@ test('video package prompt v4 freezes occupancy and safe narration-budget guidan
   assert.ok(content.includes(packagePrompt.VOLUVIA_VIDEO_PACKAGE_PROMPT_COMPATIBILITY_JSON));
   assert.equal(packagePrompt.VOLUVIA_VIDEO_PACKAGE_DE_V4_PROMPT_SHA256,
     '5a74157f539206fdbf18bbc7f199f154045bb14ec85059ea2255fa0b33be4532');
+});
+
+test('prompt v5 is immutable, catalog-resolvable, and preserves every prior prompt identity', () => {
+  assert.equal(packagePromptV5.VOLUVIA_VIDEO_PACKAGE_DE_V5_PROMPT_ID, 'voluvia.video.package-generator.de');
+  assert.equal(packagePromptV5.VOLUVIA_VIDEO_PACKAGE_DE_V5_PROMPT_VERSION, 5);
+  assert.equal(hashPromptContent(packagePromptV5.VOLUVIA_VIDEO_PACKAGE_DE_V5_PROMPT),
+    '97fd628bfdf6e241ce25cefe1a3552fc0e42e05f935dfb8b5a998a77e1684731');
+  assert.ok(packagePromptV5.VOLUVIA_VIDEO_PACKAGE_DE_V5_PROMPT.startsWith(packagePrompt.VOLUVIA_VIDEO_PACKAGE_DE_V4_PROMPT));
+  for (const phrase of ['einzige von dir verfasste Narrationsquelle', 'echte LF-Zeilenumbrüche',
+    '1 bis 4 nichtleere Zeilen', '1 bis 42 Unicode-Skalare', 'keine Cue-Zeiten',
+    'kein Reflow', 'keinen versteckten Fallback']) assert.ok(packagePromptV5.VOLUVIA_VIDEO_PACKAGE_DE_V5_PROMPT.includes(phrase));
+  const catalog = new StaticPromptCatalog();
+  assert.equal(catalog.resolve(contracts.VOLUVIA_VIDEO_PACKAGE_V5_PROMPT_REFERENCE).sha256,
+    packagePromptV5.VOLUVIA_VIDEO_PACKAGE_DE_V5_PROMPT_SHA256);
+  assert.equal(catalog.resolve({ promptId: 'voluvia.video.package-generator.de', promptVersion: 6 }), undefined);
+  for (const [version, expected] of [[1, packagePromptV1.VOLUVIA_VIDEO_PACKAGE_DE_PROMPT_SHA256],
+    [2, packagePromptV2.VOLUVIA_VIDEO_PACKAGE_DE_V2_PROMPT_SHA256],
+    [3, packagePromptV3.VOLUVIA_VIDEO_PACKAGE_DE_V3_PROMPT_SHA256],
+    [4, packagePrompt.VOLUVIA_VIDEO_PACKAGE_DE_V4_PROMPT_SHA256]])
+    assert.equal(catalog.resolve({ promptId: 'voluvia.video.package-generator.de', promptVersion: version }).sha256, expected);
+});
+
+test('v5 derives the exact explicit subtitle lines, canonical narration, timing, and distinct identities', async () => {
+  const legacy = (await run()).output; const current = (await runV5()).output;
+  assert.equal(current.operationId, 'voluvia.video.package.generate.ai.v2');
+  assert.equal(current.schemaVersion, 1); assert.equal(current.provenance.promptVersion, 5);
+  assert.equal(current.provenance.promptContentHash, packagePromptV5.VOLUVIA_VIDEO_PACKAGE_DE_V5_PROMPT_SHA256);
+  assert.deepEqual(current.voiceover.segments.map(segment => segment.spokenText), [
+    'Ein Hair Topper ergänzt dein eigenes Haar sanft. Die leichte Lace Basis ganz nah zu sehen.',
+    'Drei Clips siehst du ruhig und klar im Bild. Du siehst den Einsatz im Alltag ruhig und klar.'
+  ]);
+  assert.equal(current.voiceover.fullScript, current.voiceover.segments.map(segment => segment.spokenText).join('\n'));
+  assert.equal(current.narrationPackage.narrationText, current.voiceover.fullScript);
+  assert.deepEqual(current.narrationPackage.subtitleLines, [
+    { cueId: 'cue-01', sceneId: 'scene-01', lines: ['Ein Hair Topper ergänzt', 'dein eigenes Haar sanft.'], startSecond: 0, endSecond: 4.314 },
+    { cueId: 'cue-02', sceneId: 'scene-01', lines: ['Die leichte Lace Basis', 'ganz nah zu sehen.'], startSecond: 4.314, endSecond: 8 },
+    { cueId: 'cue-03', sceneId: 'scene-02', lines: ['Drei Clips siehst du', 'ruhig und klar im Bild.'], startSecond: 15, endSecond: 18.868 },
+    { cueId: 'cue-04', sceneId: 'scene-02', lines: ['Du siehst den Einsatz', 'im Alltag ruhig und klar.'], startSecond: 18.868, endSecond: 23 }
+  ]);
+  assert.deepEqual(current.voiceover.segments.map(segment => segment.estimatedSeconds), [8, 8]);
+  assert.equal(current.packageId, '21c3650c8cd020014b547919db451a49eabf01af94571dc668d0e66159652c94');
+  assert.equal(hashVideoPackageValue(current), '42e9123d97a52c88c2f854136e86fbbf5ebd3f58190a2b7f27332e07e22348d1');
+  assert.notEqual(current.packageId, legacy.packageId);
+  assert.notEqual(hashVideoPackageValue(current), hashVideoPackageValue(legacy));
+});
+
+test('frozen v5 cue metric preconditions match the authoritative offline helper', () => {
+  const helper = 'C:\\Users\\Jiayi\\AppData\\Local\\VEP-Studio\\toolchain\\install\\metrics\\frozen-font-metrics.exe';
+  const cues = [
+    [['Ein Hair Topper ergänzt', 'dein eigenes Haar sanft.'], 775, 164],
+    [['Die leichte Lace Basis', 'ganz nah zu sehen.'], 681, 164],
+    [['Drei Clips siehst du', 'ruhig und klar im Bild.'], 709, 164],
+    [['Du siehst den Einsatz', 'im Alltag ruhig und klar.'], 766, 164]
+  ];
+  for (const [lines, expectedWidth, expectedHeight] of cues) {
+    assert.ok(lines.length <= 2); assert.ok(lines.every(line => [...line].length <= 42));
+    const result = spawnSync(helper, [], { shell: false, cwd: path.dirname(helper), windowsHide: true,
+      input: lines.join('\n'), encoding: 'utf8', timeout: 5000, maxBuffer: 1024,
+      env: { PATH: '', SystemRoot: 'C:\\Windows' } });
+    assert.equal(result.status, 0); assert.equal(result.stderr, '');
+    const match = result.stdout.match(/^VEP_FONT_METRIC_V1\t1\t([0-9]+)\t([0-9]+)\t2\r?\n$/u);
+    assert.ok(match); assert.equal(Number(match[1]), expectedWidth); assert.equal(Number(match[2]), expectedHeight);
+    assert.ok(expectedWidth + 48 <= 900); assert.ok(expectedHeight + 48 <= 320);
+  }
+});
+
+test('v5 requires LF and rejects malformed explicit line structure without legacy fallback', () => {
+  const derive = result => validateAndDeriveCandidate(validateVideoPackageClientResult(result, 'v5'),
+    validateVideoPackageInput(input()), deriveEffectiveVideoFacts(validateVideoPackageInput(input())), 'v5');
+  const rejected = [
+    'No explicit line break here', 'line one\n', 'line one\n \nline three', ' line one\nline two',
+    'line one \nline two', 'line\tone\nline two', 'line\u00a0one\nline two',
+    'line one\u2028line two', 'line\u200bone\nline two', 'line\u200eone\nline two',
+    'line\u2060one\nline two', 'a\nb\nc\nd\ne', `${'x'.repeat(43)}\nline two`
+  ];
+  for (const spokenText of rejected) {
+    const result = clientResultV5(); result.candidate.voiceover.segments[0].spokenText = spokenText;
+    assert.throws(() => derive(result), error => error instanceof VideoPackageLocalValidationFailure);
+  }
+  for (const separator of ['\r\n', '\r']) {
+    const result = clientResultV5(); result.candidate.voiceover.segments[0].spokenText =
+      result.candidate.voiceover.segments[0].spokenText.replaceAll('\n', separator);
+    assert.deepEqual(derive(result).subtitles.slice(0, 2).map(cue => cue.lines), [
+      ['Ein Hair Topper ergänzt', 'dein eigenes Haar sanft.'], ['Die leichte Lace Basis', 'ganz nah zu sehen.']]);
+  }
+  const repeatedSpaces = clientResultV5(); repeatedSpaces.candidate.voiceover.segments[0].spokenText =
+    repeatedSpaces.candidate.voiceover.segments[0].spokenText.replace('Hair Topper', 'Hair   Topper');
+  const normalized = derive(repeatedSpaces);
+  assert.equal(normalized.segments[0].spokenText.includes('  '), false);
+  assert.deepEqual(normalized.subtitles[0].lines, ['Ein Hair Topper ergänzt', 'dein eigenes Haar sanft.']);
+});
+
+test('v5 rejects U+2029 at the explicit whitespace boundary without normalization to space', () => {
+  const result = clientResultV5();
+  result.candidate.voiceover.segments[0].spokenText =
+    'Ein Hair Topper ergänzt\ndein eigenes Haar sanft.\nDie leichte Lace\u2029Basis\nganz nah zu sehen.';
+  const value = validateVideoPackageInput(input());
+  const validated = validateVideoPackageClientResult(result, 'v5');
+  assert.throws(
+    () => validateAndDeriveCandidate(validated, value, deriveEffectiveVideoFacts(value), 'v5'),
+    error => error instanceof VideoPackageLocalValidationFailure &&
+      error.code === 'duration_invalid' && error.durationInvalidReason === 'other_duration_invalid'
+  );
+});
+
+test('operation lineage matrix rejects cross-lineage provider provenance before derivation', async () => {
+  const v5ForLegacy = clientResultV5();
+  assert.throws(() => validateVideoPackageClientResult(v5ForLegacy, 'v4'),
+    error => error instanceof VideoPackageLocalValidationFailure && error.code === 'local_validation');
+  let legacyDiagnostic;
+  await assert.rejects(() => run(input(), v5ForLegacy, value => { legacyDiagnostic = value; }),
+    /^Error: AI video package generation failed\.$/u);
+  assert.deepEqual(legacyDiagnostic, {
+    diagnosticCategory: 'local_validation', localValidationCode: 'local_validation', requestAttempted: true
+  });
+
+  const v4ForV2 = clientResult();
+  assert.throws(() => validateVideoPackageClientResult(v4ForV2, 'v5'),
+    error => error instanceof VideoPackageLocalValidationFailure && error.code === 'local_validation');
+  let v2Diagnostic;
+  await assert.rejects(() => runV5(input(), v4ForV2, value => { v2Diagnostic = value; }),
+    /^Error: AI video package generation failed\.$/u);
+  assert.deepEqual(v2Diagnostic, {
+    diagnosticCategory: 'local_validation', localValidationCode: 'local_validation', requestAttempted: true
+  });
+
+  assert.equal((await run()).output.provenance.promptVersion, 4);
+  assert.equal((await runV5()).output.provenance.promptVersion, 5);
+});
+
+test('legacy v4 fixture retains its exact historical package and subtitle identities', async () => {
+  const output = (await run()).output;
+  assert.equal(output.packageId, '09ba11a21061d22c5596d8520ba01c9309c64c9145003c3dc7395d3c7ea93dbd');
+  assert.deepEqual(output.narrationPackage.subtitleLines, [
+    { cueId: 'cue-01', sceneId: 'scene-01', lines: ['Ein Hair Topper ergänzt das eigene Haar', 'sanft und zeigt seine leichte Lace Basis'], startSecond: 0, endSecond: 6.53 },
+    { cueId: 'cue-02', sceneId: 'scene-01', lines: ['ganz aus der Nähe.'], startSecond: 6.53, endSecond: 8 },
+    { cueId: 'cue-03', sceneId: 'scene-02', lines: ['Danach siehst du drei Clips und erfährst', 'ruhig wie das Produkt im Alltag eingesetzt'], startSecond: 15, endSecond: 21.989 },
+    { cueId: 'cue-04', sceneId: 'scene-02', lines: ['werden kann.'], startSecond: 21.989, endSecond: 23 }
+  ]);
+  assert.equal(hashVideoPackageValue(output), '9312053a7ff046501ec1bac54487275df6fef4ac9cd3c08407d4a01445e4bc4d');
 });
 
 test('operation creates immutable deterministic business package and keeps diagnostics separate', async () => {

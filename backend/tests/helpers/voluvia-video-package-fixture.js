@@ -1,6 +1,7 @@
 const planner = require('../../dist/workflows/examples/voluvia/planner/voluvia-content-planner-contracts');
 const plannerPrompt = require('../../dist/prompts/voluvia/de/content-planner-v2.prompt');
 const packagePrompt = require('../../dist/prompts/voluvia/de/video-package-generator-v4.prompt');
+const packagePromptV5 = require('../../dist/prompts/voluvia/de/video-package-generator-v5.prompt');
 
 const fact = (factId) => ({ factId, displayValue: planner.APPROVED_PRODUCT_FACT_VALUES[factId] });
 function plannerResult() {
@@ -52,4 +53,14 @@ function candidate() {
 function clientResult() {
   return { candidate: candidate(), provenance: { provider: 'fake', model: 'offline-model', promptId: 'voluvia.video.package-generator.de', promptVersion: 4, promptContentHash: packagePrompt.VOLUVIA_VIDEO_PACKAGE_DE_V4_PROMPT_SHA256 }, diagnostics: { provider: 'fake', model: 'offline-model', requestAttempted: true, responseId: 'safe-response', usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 } } };
 }
-module.exports = { input, clientResult };
+function clientResultV5() {
+  const value = candidate();
+  value.voiceover.segments[0].spokenText = 'Ein Hair Topper ergänzt\ndein eigenes Haar sanft.\nDie leichte Lace Basis\nganz nah zu sehen.';
+  value.voiceover.segments[1].spokenText = 'Drei Clips siehst du\nruhig und klar im Bild.\nDu siehst den Einsatz\nim Alltag ruhig und klar.';
+  return { candidate: value, provenance: { provider: 'fake', model: 'offline-model',
+    promptId: 'voluvia.video.package-generator.de', promptVersion: 5,
+    promptContentHash: packagePromptV5.VOLUVIA_VIDEO_PACKAGE_DE_V5_PROMPT_SHA256 },
+    diagnostics: { provider: 'fake', model: 'offline-model', requestAttempted: true,
+      responseId: 'safe-response-v5', usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 } } };
+}
+module.exports = { input, clientResult, clientResultV5 };

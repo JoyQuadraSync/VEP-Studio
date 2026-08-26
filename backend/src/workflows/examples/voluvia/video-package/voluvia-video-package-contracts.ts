@@ -9,14 +9,19 @@ import {
 } from '../planner/voluvia-content-planner-contracts';
 
 export const VOLUVIA_VIDEO_PACKAGE_OPERATION_ID = 'voluvia.video.package.generate.ai';
+export const VOLUVIA_VIDEO_PACKAGE_OPERATION_V2_ID = 'voluvia.video.package.generate.ai.v2';
 export const VOLUVIA_VIDEO_PACKAGE_WORKFLOW_ID = 'voluvia.video.packagegeneration.ai.workflow';
 export const VOLUVIA_VIDEO_PACKAGE_WORKFLOW_VERSION = 1;
+export const VOLUVIA_VIDEO_PACKAGE_WORKFLOW_V2_VERSION = 2;
 export const VOLUVIA_VIDEO_PACKAGE_SCHEMA_VERSION = 1;
-// M3 remains workflow version 1 because this unreleased composition has no
-// committed, tagged, or durably persisted execution; only its prompt pin advanced.
+// The released v4 lineage remains immutable at workflow version 1.
 export const VOLUVIA_VIDEO_PACKAGE_PROMPT_REFERENCE: PromptReference = Object.freeze({
   promptId: 'voluvia.video.package-generator.de', promptVersion: 4
 });
+export const VOLUVIA_VIDEO_PACKAGE_V5_PROMPT_REFERENCE: PromptReference = Object.freeze({
+  promptId: 'voluvia.video.package-generator.de', promptVersion: 5
+});
+export type VideoPackageLineage = 'v4' | 'v5';
 
 export const PLANNER_REVIEW_DECISIONS = ['approved_for_package_generation', 'rejected'] as const;
 export type PlannerReviewDecision = typeof PLANNER_REVIEW_DECISIONS[number];
@@ -150,9 +155,9 @@ export interface SubtitleCue { readonly cueId: string; readonly sceneId: string;
 export interface VideoAssetChecklistItem { readonly assetId: VoluviaVideoAssetId; readonly required: boolean; readonly usedBySceneIds: readonly string[]; readonly productionInstruction: string; readonly missingAssetBehavior: 'reject-package' | 'manual-substitution-required' }
 
 export interface VoluviaVideoPackage {
-  readonly packageId: string; readonly operationId: typeof VOLUVIA_VIDEO_PACKAGE_OPERATION_ID; readonly schemaVersion: 1;
+  readonly packageId: string; readonly operationId: typeof VOLUVIA_VIDEO_PACKAGE_OPERATION_ID | typeof VOLUVIA_VIDEO_PACKAGE_OPERATION_V2_ID; readonly schemaVersion: 1;
   readonly sourcePlan: { readonly workflowId: 'voluvia.tiktok.contentplanning.ai.workflow'; readonly workflowVersion: 1; readonly operationId: 'voluvia.content.plan.ai'; readonly sourcePlanHash: string };
-  readonly provenance: { readonly provider: string; readonly model: string; readonly promptId: typeof VOLUVIA_VIDEO_PACKAGE_PROMPT_REFERENCE.promptId; readonly promptVersion: 4; readonly promptContentHash: string; readonly generatedAt: string };
+  readonly provenance: { readonly provider: string; readonly model: string; readonly promptId: typeof VOLUVIA_VIDEO_PACKAGE_PROMPT_REFERENCE.promptId; readonly promptVersion: 4 | 5; readonly promptContentHash: string; readonly generatedAt: string };
   readonly summary: { readonly audience: VoluviaContentPlanningResult['plan']['audience']; readonly strategy: VoluviaContentPlanningResult['plan']['strategy']; readonly language: 'de-DE'; readonly platform: 'TikTok'; readonly targetDurationSeconds: 20 | 30 | 45; readonly estimatedDurationSeconds: 20 | 30 | 45; readonly videoStyle: VoluviaContentPlanningResult['plan']['production']['recommendedVideoStyle']; readonly hookStrategy: VoluviaContentPlanningResult['plan']['production']['recommendedHookStrategy']; readonly visualProofRequired: boolean; readonly presenterMode: VideoPresenterMode };
   readonly hook: VideoPackageCandidate['hook'];
   readonly voiceover: { readonly segments: readonly CanonicalVoiceoverSegment[]; readonly fullScript: string; readonly estimatedSpokenSeconds: number };

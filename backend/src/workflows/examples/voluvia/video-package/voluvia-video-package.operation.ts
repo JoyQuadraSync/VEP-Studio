@@ -4,12 +4,13 @@ import { Clock } from '../../../../runtime/services/clock';
 import { OperationHandler } from '../../../runtime/operation-handler';
 import { PROHIBITED_TONES } from '../planner/voluvia-content-planner-contracts';
 import {
-  VOLUVIA_VIDEO_PACKAGE_OPERATION_ID, VOLUVIA_VIDEO_PACKAGE_PROMPT_REFERENCE,
+  VOLUVIA_VIDEO_PACKAGE_OPERATION_ID, VOLUVIA_VIDEO_PACKAGE_OPERATION_V2_ID,
+  VOLUVIA_VIDEO_PACKAGE_PROMPT_REFERENCE, VOLUVIA_VIDEO_PACKAGE_V5_PROMPT_REFERENCE,
   VOLUVIA_VIDEO_PACKAGE_SCHEMA_VERSION, VoluviaVideoPackage,
   VideoPackageOperationDiagnostic, VideoPackageScene, VideoOnScreenText,
   VIDEO_PACKAGE_TEXT_LOCATIONS, VIDEO_PACKAGE_UNSUPPORTED_CLAIM_REASONS,
   VIDEO_PACKAGE_DURATION_INVALID_REASONS,
-  VideoAssetChecklistItem
+  VideoAssetChecklistItem, VideoPackageLineage
 } from './voluvia-video-package-contracts';
 import {
   canonicalizeVideoPackageValue, deriveEffectiveVideoFacts, hashVideoPackageValue,
@@ -21,7 +22,23 @@ export function createVoluviaVideoPackageOperation(
   client: VideoPackageGenerationClient,
   clock: Clock,
   onDiagnostics?: (diagnostics: VideoPackageOperationDiagnostic) => void
+): OperationHandler { return createVersionedVoluviaVideoPackageOperation(client, clock, 'v4', onDiagnostics); }
+
+export function createVoluviaVideoPackageV2Operation(
+  client: VideoPackageGenerationClient,
+  clock: Clock,
+  onDiagnostics?: (diagnostics: VideoPackageOperationDiagnostic) => void
+): OperationHandler { return createVersionedVoluviaVideoPackageOperation(client, clock, 'v5', onDiagnostics); }
+
+function createVersionedVoluviaVideoPackageOperation(
+  client: VideoPackageGenerationClient,
+  clock: Clock,
+  lineage: VideoPackageLineage,
+  onDiagnostics?: (diagnostics: VideoPackageOperationDiagnostic) => void
 ): OperationHandler {
+  const operationId = lineage === 'v4' ? VOLUVIA_VIDEO_PACKAGE_OPERATION_ID : VOLUVIA_VIDEO_PACKAGE_OPERATION_V2_ID;
+  const prompt = lineage === 'v4' ? VOLUVIA_VIDEO_PACKAGE_PROMPT_REFERENCE : VOLUVIA_VIDEO_PACKAGE_V5_PROMPT_REFERENCE;
+  const promptVersion = lineage === 'v4' ? 4 as const : 5 as const;
   const report = (diagnostic: VideoPackageOperationDiagnostic): void => {
     try { onDiagnostics?.(diagnostic); } catch { /* Observers cannot alter workflow semantics. */ }
   };
@@ -40,19 +57,19 @@ export function createVoluviaVideoPackageOperation(
         brandPolicy: { tone: [...input.brandPolicy.tone], prohibitedTone: [...input.brandPolicy.prohibitedTone], forbiddenClaims: [...input.brandPolicy.forbiddenClaims] },
         videoControls: { ...input.videoControls },
         availableAssetIds: [...input.availableAssetIds],
-        prompt: { ...VOLUVIA_VIDEO_PACKAGE_PROMPT_REFERENCE }
-      }));
+        prompt: { ...prompt }
+      }), lineage);
       if (clientResult.diagnostics) {
         report(clientResult.diagnostics);
       }
-      const derived = validateAndDeriveCandidate(clientResult, input, effectiveFacts);
+      const derived = validateAndDeriveCandidate(clientResult, input, effectiveFacts, lineage);
       const sourcePlanHash = hashVideoPackageValue(input.reviewedPlannerResult.result);
       const generatedAt = clock.now().toISOString();
       const packageId = hashVideoPackageValue({
-        operationId: VOLUVIA_VIDEO_PACKAGE_OPERATION_ID,
+        operationId,
         schemaVersion: VOLUVIA_VIDEO_PACKAGE_SCHEMA_VERSION,
         sourcePlanHash,
-        prompt: { ...VOLUVIA_VIDEO_PACKAGE_PROMPT_REFERENCE, promptContentHash: clientResult.provenance.promptContentHash },
+        prompt: { ...prompt, promptContentHash: clientResult.provenance.promptContentHash },
         controls: input.videoControls,
         candidate: derived.candidate
       });
@@ -92,10 +109,10 @@ export function createVoluviaVideoPackageOperation(
         input.reviewedPlannerResult.result.plan.brandSafety.prohibitedTone.includes(tone) ||
         input.brandPolicy.prohibitedTone.includes(tone));
       const result: VoluviaVideoPackage = {
-        packageId, operationId: VOLUVIA_VIDEO_PACKAGE_OPERATION_ID, schemaVersion: 1,
+        packageId, operationId, schemaVersion: 1,
         sourcePlan: { workflowId: input.reviewedPlannerResult.workflowId, workflowVersion: 1, operationId: input.reviewedPlannerResult.operationId, sourcePlanHash },
         provenance: { provider: clientResult.provenance.provider, model: clientResult.provenance.model,
-          promptId: VOLUVIA_VIDEO_PACKAGE_PROMPT_REFERENCE.promptId, promptVersion: 4,
+          promptId: prompt.promptId, promptVersion,
           promptContentHash: clientResult.provenance.promptContentHash, generatedAt },
         summary: { audience: { ...planner.audience }, strategy: { ...planner.strategy }, language: 'de-DE', platform: 'TikTok',
           targetDurationSeconds: input.videoControls.targetDurationSeconds,
@@ -129,7 +146,7 @@ export function createVoluviaVideoPackageOperation(
         packageReviewStatus: 'pending_manual_review'
       };
       canonicalizeVideoPackageValue(result);
-      return validateFinalVideoPackage(result, { input, clientResult, effectiveFacts });
+      return validateFinalVideoPackage(result, { input, clientResult, effectiveFacts, lineage });
     } catch (error) {
       if (error instanceof VideoPackageLocalValidationFailure) {
         const safeReason = error.code === 'unsupported_claim' && error.unsupportedClaimReason !== undefined &&

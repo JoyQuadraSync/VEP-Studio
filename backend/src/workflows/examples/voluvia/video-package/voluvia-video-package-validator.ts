@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { VOLUVIA_CONTENT_PLANNER_DE_V2_PROMPT_SHA256 } from '../../../../prompts/voluvia/de/content-planner-v2.prompt';
 import { VOLUVIA_VIDEO_PACKAGE_DE_V4_PROMPT_SHA256 } from '../../../../prompts/voluvia/de/video-package-generator-v4.prompt';
+import { VOLUVIA_VIDEO_PACKAGE_DE_V5_PROMPT_SHA256 } from '../../../../prompts/voluvia/de/video-package-generator-v5.prompt';
 import {
   validateReviewedVoluviaContentPlanningResult,
   VoluviaContentPlanLocalValidationFailure
@@ -21,13 +22,14 @@ import {
 import {
   PLANNER_REVIEW_DECISIONS, VIDEO_CAMERA_FRAMINGS, VIDEO_TEXT_STYLE_ROLES,
   VIDEO_TRANSITION_TYPES, VIDEO_VISUAL_PROOF_ROLES, VOLUVIA_VIDEO_ASSET_IDS,
-  VOLUVIA_VIDEO_PACKAGE_OPERATION_ID, VOLUVIA_VIDEO_PACKAGE_PROMPT_REFERENCE,
+  VOLUVIA_VIDEO_PACKAGE_OPERATION_ID, VOLUVIA_VIDEO_PACKAGE_OPERATION_V2_ID,
+  VOLUVIA_VIDEO_PACKAGE_PROMPT_REFERENCE, VOLUVIA_VIDEO_PACKAGE_V5_PROMPT_REFERENCE,
   VOLUVIA_VIDEO_PACKAGE_SCHEMA_VERSION,
   VideoPackageDurationDiagnosticContext, VideoPackageDurationInvalidReason,
   VideoPackageTextLocation, VideoPackageUnsupportedClaimReason,
   VideoPackageCandidate, VideoPackageClientResult,
   VideoPackageLocalValidationCode, VoluviaVideoPackage, VoluviaVideoPackageGenerationInput,
-  CanonicalVoiceoverSegment, SubtitleCue
+  CanonicalVoiceoverSegment, SubtitleCue, VideoPackageLineage
 } from './voluvia-video-package-contracts';
 
 export class VideoPackageLocalValidationFailure {
@@ -129,14 +131,14 @@ const subtitleCueSchema = z.object({
   endSecond: z.number().positive().finite()
 }).strict();
 const finalPackageSchema = z.object({
-  packageId: z.string().regex(/^[a-f0-9]{64}$/u), operationId: z.literal(VOLUVIA_VIDEO_PACKAGE_OPERATION_ID),
+  packageId: z.string().regex(/^[a-f0-9]{64}$/u), operationId: z.enum([VOLUVIA_VIDEO_PACKAGE_OPERATION_ID, VOLUVIA_VIDEO_PACKAGE_OPERATION_V2_ID]),
   schemaVersion: z.literal(1),
   sourcePlan: z.object({ workflowId: z.literal('voluvia.tiktok.contentplanning.ai.workflow'),
     workflowVersion: z.literal(1), operationId: z.literal('voluvia.content.plan.ai'),
     sourcePlanHash: z.string().regex(/^[a-f0-9]{64}$/u) }).strict(),
   provenance: z.object({ provider: z.string().min(1).max(100), model: z.string().min(1).max(200),
-    promptId: z.literal(VOLUVIA_VIDEO_PACKAGE_PROMPT_REFERENCE.promptId), promptVersion: z.literal(4),
-    promptContentHash: z.literal(VOLUVIA_VIDEO_PACKAGE_DE_V4_PROMPT_SHA256),
+    promptId: z.literal(VOLUVIA_VIDEO_PACKAGE_PROMPT_REFERENCE.promptId), promptVersion: z.union([z.literal(4), z.literal(5)]),
+    promptContentHash: z.enum([VOLUVIA_VIDEO_PACKAGE_DE_V4_PROMPT_SHA256, VOLUVIA_VIDEO_PACKAGE_DE_V5_PROMPT_SHA256]),
     generatedAt: z.string().datetime({ offset: true }) }).strict(),
   summary: z.object({
     audience: z.object({ gender: z.literal('women'), primaryConcern: z.enum(AUDIENCE_CONCERNS), awarenessLevel: z.enum(AUDIENCE_AWARENESS_LEVELS) }).strict(),
@@ -277,11 +279,22 @@ export function deriveEffectiveVideoFacts(input: VoluviaVideoPackageGenerationIn
   return input.approvedProductFacts.filter((fact) => plannerFacts.some((plannerFact) => plannerFact.factId === fact.factId) && (fact.factId !== 'price-49-eur' || input.videoControls.priceMayBeFeatured) && (fact.factId !== 'ships-from-germany' || input.videoControls.shippingMayBeFeatured));
 }
 
-export function validateVideoPackageClientResult(value: unknown): VideoPackageClientResult {
+function lineageIdentity(lineage: VideoPackageLineage): Readonly<{ operationId: typeof VOLUVIA_VIDEO_PACKAGE_OPERATION_ID | typeof VOLUVIA_VIDEO_PACKAGE_OPERATION_V2_ID;
+  prompt: typeof VOLUVIA_VIDEO_PACKAGE_PROMPT_REFERENCE; promptVersion: 4 | 5; promptContentHash: string }> {
+  return lineage === 'v4' ? { operationId: VOLUVIA_VIDEO_PACKAGE_OPERATION_ID, prompt: VOLUVIA_VIDEO_PACKAGE_PROMPT_REFERENCE,
+    promptVersion: 4, promptContentHash: VOLUVIA_VIDEO_PACKAGE_DE_V4_PROMPT_SHA256 } :
+    { operationId: VOLUVIA_VIDEO_PACKAGE_OPERATION_V2_ID, prompt: VOLUVIA_VIDEO_PACKAGE_V5_PROMPT_REFERENCE,
+      promptVersion: 5, promptContentHash: VOLUVIA_VIDEO_PACKAGE_DE_V5_PROMPT_SHA256 };
+}
+
+export function validateVideoPackageClientResult(value: unknown, lineage: VideoPackageLineage = 'v4'): VideoPackageClientResult {
   canonicalizeVideoPackageValue(value);
+  const identity = lineageIdentity(lineage);
   const schema = z.object({
     candidate: videoPackageCandidateSchema,
-    provenance: z.object({ provider: z.string().min(1).max(100), model: z.string().min(1).max(200), promptId: z.literal(VOLUVIA_VIDEO_PACKAGE_PROMPT_REFERENCE.promptId), promptVersion: z.literal(4), promptContentHash: z.literal(VOLUVIA_VIDEO_PACKAGE_DE_V4_PROMPT_SHA256) }).strict(),
+    provenance: z.object({ provider: z.string().min(1).max(100), model: z.string().min(1).max(200),
+      promptId: z.literal(identity.prompt.promptId), promptVersion: z.literal(identity.promptVersion),
+      promptContentHash: z.literal(identity.promptContentHash) }).strict(),
     diagnostics: z.object({ provider: z.string().min(1).max(100), model: z.string().min(1).max(200), requestAttempted: z.boolean(), responseId: z.string().regex(/^[A-Za-z0-9_-]{1,200}$/u).optional(), usage: z.object({ inputTokens: z.number().int().nonnegative(), outputTokens: z.number().int().nonnegative(), totalTokens: z.number().int().nonnegative() }).strict().optional(), startedAt: z.string().datetime().optional(), completedAt: z.string().datetime().optional(), category: z.enum(['configuration','authentication','permission_denied','rate_limit','invalid_request','model_unavailable','timeout','network','provider_server','response_incomplete','response_refused','response_invalid','unknown']).optional() }).strict().optional()
   }).strict();
   const parsed = schema.safeParse(value);
@@ -312,6 +325,25 @@ export function validateVideoPackageClientResult(value: unknown): VideoPackageCl
 
 function normalizeNarration(value: string): string { return value.normalize('NFKC').replace(/\r\n?/gu, '\n').trim().replace(/\s+/gu, ' '); }
 function wordCount(value: string): number { return value.length === 0 ? 0 : value.split(/\s+/u).length; }
+
+function explicitSubtitleLines(value: string): Readonly<{ narration: string; lines: readonly string[] }> {
+  for (const scalar of value) {
+    const codePoint = scalar.codePointAt(0)!;
+    if ((/\p{Cc}/u.test(scalar) && codePoint !== 0x0a && codePoint !== 0x0d) || /[\p{Cf}\p{Z}]/u.test(scalar) && codePoint !== 0x20)
+      failDuration('other_duration_invalid');
+  }
+  const normalized = value.normalize('NFKC').replace(/\r\n?/gu, '\n');
+  if (!normalized.includes('\n')) failDuration('other_duration_invalid');
+  const lines = normalized.split('\n');
+  if (lines.length < 1 || lines.length > 4) failDuration('other_duration_invalid');
+  const canonical = lines.map((line) => {
+    if (line.length === 0 || line.trim() !== line || /[^\S ]/u.test(line)) failDuration('other_duration_invalid');
+    const result = line.replace(/ +/gu, ' ');
+    if (result.length === 0 || countUnicodeCodePoints(result) > 42) failDuration('subtitle_line_too_long');
+    return result;
+  });
+  return Object.freeze({ narration: canonical.join(' '), lines: Object.freeze(canonical) });
+}
 
 function wrapSubtitle(value: string): readonly string[][] {
   const words = value.split(' '); const lines: string[] = []; let line = '';
@@ -408,7 +440,8 @@ function validateAttributedText(
 
 export interface ValidatedCandidateDerivation { readonly candidate: VideoPackageCandidate; readonly segments: readonly CanonicalVoiceoverSegment[]; readonly fullScript: string; readonly estimatedSpokenSeconds: number; readonly subtitles: readonly SubtitleCue[]; readonly claimsUsed: readonly ApprovedProductFactId[] }
 
-export function validateAndDeriveCandidate(clientResult: VideoPackageClientResult, input: VoluviaVideoPackageGenerationInput, effectiveFacts: readonly ApprovedProductFact[]): ValidatedCandidateDerivation {
+export function validateAndDeriveCandidate(clientResult: VideoPackageClientResult, input: VoluviaVideoPackageGenerationInput,
+  effectiveFacts: readonly ApprovedProductFact[], lineage: VideoPackageLineage = 'v4'): ValidatedCandidateDerivation {
   const candidate = clientResult.candidate; const plannerScenes = input.reviewedPlannerResult.result.plan.production.suggestedScenes;
   if (candidate.scenes.length !== plannerScenes.length) failDuration('invalid_scene_count', {
     targetDurationSeconds: input.videoControls.targetDurationSeconds,
@@ -440,7 +473,8 @@ export function validateAndDeriveCandidate(clientResult: VideoPackageClientResul
   });
   const segments: CanonicalVoiceoverSegment[] = []; const subtitles: SubtitleCue[] = []; const claimSet = new Set<ApprovedProductFactId>();
   candidate.voiceover.segments.forEach((segment, index) => {
-    const normalized = normalizeNarration(segment.spokenText); if (!normalized) failDuration('other_duration_invalid');
+    const explicit = lineage === 'v5' ? explicitSubtitleLines(segment.spokenText) : undefined;
+    const normalized = explicit?.narration ?? normalizeNarration(segment.spokenText); if (!normalized) failDuration('other_duration_invalid');
     validateAttributedText(normalized, segment.proposedFactIds, input, effectiveIds, claimSet, 'voiceover_segment');
     const estimatedSeconds = Math.ceil(wordCount(normalized) / 2.25); if (estimatedSeconds > candidate.scenes[index]!.durationSeconds) failDuration('segment_duration_exceeds_scene', {
       targetDurationSeconds: input.videoControls.targetDurationSeconds,
@@ -450,7 +484,10 @@ export function validateAndDeriveCandidate(clientResult: VideoPackageClientResul
     });
     const sceneId = `scene-${String(index + 1).padStart(2, '0')}`; const segmentId = `segment-${String(index + 1).padStart(2, '0')}`;
     segments.push({ segmentId, sceneId, sourceScene: segment.sourceScene, spokenText: normalized, estimatedSeconds, claimsUsed: [...segment.proposedFactIds] });
-    const cueLines = wrapSubtitle(normalized); const totalPoints = cueLines.reduce((sum, lines) => sum + countUnicodeCodePoints(lines.join(' ')), 0); const totalMs = estimatedSeconds * 1000; let usedMs = 0;
+    const cueLines = explicit === undefined ? wrapSubtitle(normalized) : explicit.lines.reduce<string[][]>((groups, line, lineIndex) => {
+      if (lineIndex % 2 === 0) groups.push([line]); else groups.at(-1)!.push(line); return groups;
+    }, []);
+    const totalPoints = cueLines.reduce((sum, lines) => sum + countUnicodeCodePoints(lines.join(' ')), 0); const totalMs = estimatedSeconds * 1000; let usedMs = 0;
     cueLines.forEach((lines, cueIndex) => {
       const durationMs = cueIndex === cueLines.length - 1 ? totalMs - usedMs : Math.floor(totalMs * countUnicodeCodePoints(lines.join(' ')) / totalPoints);
       if (durationMs <= 0) failDuration('subtitle_zero_duration'); const startMs = sceneStarts[index]! * 1000 + usedMs; const endMs = startMs + durationMs;
@@ -540,6 +577,7 @@ export interface FinalVideoPackageValidationContext {
   readonly input: VoluviaVideoPackageGenerationInput;
   readonly clientResult: VideoPackageClientResult;
   readonly effectiveFacts: readonly ApprovedProductFact[];
+  readonly lineage?: VideoPackageLineage;
 }
 
 export function validateFinalVideoPackage(
@@ -550,15 +588,16 @@ export function validateFinalVideoPackage(
   const parsed = finalPackageSchema.safeParse(value);
   if (!parsed.success) fail(parsed.error.issues.some((issue) => issue.code === 'unrecognized_keys') ? 'unknown_field' : 'local_validation');
   const packageValue = parsed.data;
-  const { input, clientResult, effectiveFacts } = context;
-  const derived = validateAndDeriveCandidate(clientResult, input, effectiveFacts);
+  const { input, clientResult, effectiveFacts } = context; const lineage = context.lineage ?? 'v4';
+  const identity = lineageIdentity(lineage);
+  const derived = validateAndDeriveCandidate(clientResult, input, effectiveFacts, lineage);
   const planner = input.reviewedPlannerResult.result.plan;
   const sourcePlanHash = hashVideoPackageValue(input.reviewedPlannerResult.result);
   const expectedPackageId = hashVideoPackageValue({
-    operationId: VOLUVIA_VIDEO_PACKAGE_OPERATION_ID,
+    operationId: identity.operationId,
     schemaVersion: VOLUVIA_VIDEO_PACKAGE_SCHEMA_VERSION,
     sourcePlanHash,
-    prompt: { ...VOLUVIA_VIDEO_PACKAGE_PROMPT_REFERENCE,
+    prompt: { ...identity.prompt,
       promptContentHash: clientResult.provenance.promptContentHash },
     controls: input.videoControls,
     candidate: derived.candidate
@@ -610,7 +649,7 @@ export function validateFinalVideoPackage(
       promptId: packageValue.provenance.promptId, promptVersion: packageValue.provenance.promptVersion,
       promptContentHash: packageValue.provenance.promptContentHash }, {
       provider: clientResult.provenance.provider, model: clientResult.provenance.model,
-      promptId: VOLUVIA_VIDEO_PACKAGE_PROMPT_REFERENCE.promptId, promptVersion: 4,
+      promptId: identity.prompt.promptId, promptVersion: identity.promptVersion,
       promptContentHash: clientResult.provenance.promptContentHash
     }],
     [packageValue.summary, { audience: planner.audience, strategy: planner.strategy,
