@@ -43,6 +43,7 @@ export function validateSubtitleGlyphCoverage(cues: readonly RenderSubtitleCue[]
   if (typeof trusted !== 'object' || trusted === null || !coverageCapabilities.has(trusted) || trusted.executionTrust !== expectedTrust ||
     (expectedFontSha256 !== undefined && trusted.fontSha256 !== expectedFontSha256)) throw new RenderingPhaseTwoFailure('font_invalid');
   for (const cue of cues) for (const line of cue.lines) for (const scalar of line) { const codePoint = scalar.codePointAt(0);
+    if (codePoint === 0x20) continue;
     if (codePoint === undefined || !trusted.coverage.supports(codePoint)) throw new RenderingPhaseTwoFailure('glyph_unsupported'); }
 }
 export interface FontMetricResult { readonly glyphCoverage: boolean; readonly widthPx: number; readonly heightPx: number; readonly lineCount: 1 | 2 }

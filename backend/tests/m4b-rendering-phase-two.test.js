@@ -507,6 +507,44 @@ test('font metric integrity failures remain font_invalid while genuine missing g
   fails(() => validateSubtitleGlyphCoverage(phaseOne.manifest.subtitles.canonicalCues, missingGlyph, hash('d')), 'glyph_unsupported');
 });
 
+test('scalar coverage exempts only U+0020 while visible and other invisible scalars remain authoritative', () => {
+  const cue = text => [{ cueId: 'cue-01', sceneId: 'scene-01', lines: [text], startSecond: 0, endSecond: 1 }];
+  const observed = [];
+  const coverage = TrustedFontCoverage.createTestOnly(hash('d'), { supports(codePoint) {
+    observed.push(codePoint); return codePoint === 0x41;
+  } });
+  assert.doesNotThrow(() => validateSubtitleGlyphCoverage(cue(' '), coverage, hash('d')));
+  assert.deepEqual(observed, []);
+  assert.doesNotThrow(() => validateSubtitleGlyphCoverage(cue('A A'), coverage, hash('d')));
+  assert.deepEqual(observed, [0x41, 0x41]);
+  for (const codePoint of [0x00a0, 0x09, 0x2000, 0x2007, 0x200a, 0x2028, 0x2029, 0x200b, 0x2060]) {
+    const before = observed.length;
+    fails(() => validateSubtitleGlyphCoverage(cue(String.fromCodePoint(codePoint)), coverage, hash('d')), 'glyph_unsupported');
+    assert.deepEqual(observed.slice(before), [codePoint]);
+  }
+  const missingVisible = TrustedFontCoverage.createTestOnly(hash('d'), { supports: () => false });
+  fails(() => validateSubtitleGlyphCoverage(cue('B'), missingVisible, hash('d')), 'glyph_unsupported');
+  const failedHelper = TrustedFontCoverage.createTestOnly(hash('d'), { supports() {
+    throw new RenderingPhaseTwoFailure('font_invalid');
+  } });
+  fails(() => validateSubtitleGlyphCoverage(cue('A'), failedHelper, hash('d')), 'font_invalid');
+});
+
+test('ordinary spaces remain part of authoritative full-line metrics and zero-height blocks fail closed', () => {
+  let measuredLines;
+  const layout = TrustedSubtitleLayoutCapability.createTestOnly(hash('d'), { measureBlock(lines) {
+    measuredLines = [...lines]; return { glyphCoverage: true, widthPx: 700, heightPx: 164, lineCount: lines.length };
+  } });
+  assert.doesNotThrow(() => layout.verify(['Ein Hair Topper', 'dein eigenes Haar'], hash('d')));
+  assert.deepEqual(measuredLines, ['Ein Hair Topper', 'dein eigenes Haar']);
+  const zeroHeight = TrustedSubtitleLayoutCapability.createTestOnly(hash('d'), { measureBlock(lines) {
+    return { glyphCoverage: true, widthPx: 700, heightPx: 0, lineCount: lines.length };
+  } });
+  fails(() => zeroHeight.verify(['line with spaces'], hash('d')), 'subtitle_invalid');
+  fails(() => trustedLocalRuntimeModule.parseFrozenFontMetricOutputForTestOnly(
+    'VEP_FONT_METRIC_V1\t1\t700\t0\t1\n'), 'font_invalid');
+});
+
 test('final trusted execution consumption revalidates both FFmpeg and the frozen static font', async () => {
   const runtimeSource = await readFile(path.join(__dirname, '..', 'src', 'rendering', 'phase-two', 'runtime', 'trusted-local-runtime.ts'), 'utf8');
   const boundary = runtimeSource.slice(runtimeSource.indexOf('export async function revalidateTrustedExecutionForConsumption'),
