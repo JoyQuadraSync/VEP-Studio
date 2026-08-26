@@ -1,7 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { input, clientResult } = require('./helpers/voluvia-video-package-fixture');
-const { createVoluviaVideoPackageOperation } = require('../dist/workflows/examples/voluvia/video-package/voluvia-video-package.operation');
+const { input, clientResult, clientResultV5 } = require('./helpers/voluvia-video-package-fixture');
+const { createVoluviaVideoPackageOperation, createVoluviaVideoPackageV2Operation } = require('../dist/workflows/examples/voluvia/video-package/voluvia-video-package.operation');
+const { voluviaVideoPackageGenerationAiWorkflow, voluviaVideoPackageGenerationAiWorkflowV2 } = require('../dist/workflows/definitions/voluvia-video-package-generation-ai.workflow');
 const { validateStandaloneM3Package } = require('../dist/rendering/integrity/m3-package-integrity-validator');
 const { selectRenderer } = require('../dist/rendering/policy/renderer-selection-policy');
 const { compileRenderManifest } = require('../dist/rendering/manifest/render-manifest');
@@ -11,6 +12,10 @@ const { RenderingPhaseOneFailure } = require('../dist/rendering/failures/renderi
 
 async function packageFixture() {
   return createVoluviaVideoPackageOperation({ generatePackageCandidate: async () => clientResult() },
+    { now: () => new Date('2026-08-06T12:00:00.000Z') })({ stepInput: input() });
+}
+async function packageFixtureV5() {
+  return createVoluviaVideoPackageV2Operation({ generatePackageCandidate: async () => clientResultV5() },
     { now: () => new Date('2026-08-06T12:00:00.000Z') })({ stepInput: input() });
 }
 const selection = (assetIds = ['product-front', 'lace-base-close-up']) => ({
@@ -44,6 +49,59 @@ test('standalone integrity validates, detaches, freezes, and hashes a released M
   assert.match(result.packageRevisionHash, /^[a-f0-9]{64}$/);
   assert.notEqual(result.package, pkg); assert.ok(Object.isFrozen(result.package.scenes));
   assert.equal(validateStandaloneM3Package(structuredClone(pkg)).packageRevisionHash, result.packageRevisionHash);
+});
+
+test('standalone integrity accepts exactly the two observable M3 lineages', async () => {
+  const legacy = await packageFixture(); const current = await packageFixtureV5();
+  const validatedLegacy = validateStandaloneM3Package(legacy, {
+    expectedPackageRevisionHash: '9312053a7ff046501ec1bac54487275df6fef4ac9cd3c08407d4a01445e4bc4d'
+  });
+  const validatedCurrent = validateStandaloneM3Package(current, {
+    expectedPackageRevisionHash: '42e9123d97a52c88c2f854136e86fbbf5ebd3f58190a2b7f27332e07e22348d1'
+  });
+  assert.equal(validatedLegacy.packageId, '09ba11a21061d22c5596d8520ba01c9309c64c9145003c3dc7395d3c7ea93dbd');
+  assert.equal(validatedCurrent.packageId, '21c3650c8cd020014b547919db451a49eabf01af94571dc668d0e66159652c94');
+});
+
+test('standalone integrity rejects every mixed or unsupported observable lineage tuple', async (t) => {
+  const legacy = await packageFixture(); const current = await packageFixtureV5();
+  const cases = [
+    ['legacy operation with v5 prompt', legacy, p => { p.provenance.promptVersion = 5; p.provenance.promptContentHash = current.provenance.promptContentHash; }],
+    ['v2 operation with v4 prompt', current, p => { p.provenance.promptVersion = 4; p.provenance.promptContentHash = legacy.provenance.promptContentHash; }],
+    ['v4 version with v5 hash', legacy, p => { p.provenance.promptContentHash = current.provenance.promptContentHash; }],
+    ['v5 version with v4 hash', current, p => { p.provenance.promptContentHash = legacy.provenance.promptContentHash; }],
+    ['wrong prompt id', current, p => { p.provenance.promptId = 'wrong.prompt'; }],
+    ['unknown prompt version', current, p => { p.provenance.promptVersion = 6; }],
+    ['unknown prompt hash', current, p => { p.provenance.promptContentHash = '0'.repeat(64); }],
+    ['unsupported operation', current, p => { p.operationId = 'voluvia.video.package.generate.ai.v3'; }],
+    ['unsupported schema', current, p => { p.schemaVersion = 2; }]
+  ];
+  for (const [name, source, change] of cases) await t.test(name, () => {
+    fails(() => validateStandaloneM3Package(mutate(source, change)), 'invalid_source_identity');
+  });
+});
+
+test('observable operation identities remain uniquely assigned to generation workflow versions', () => {
+  assert.deepEqual([
+    [voluviaVideoPackageGenerationAiWorkflow.version, voluviaVideoPackageGenerationAiWorkflow.steps[1].operation],
+    [voluviaVideoPackageGenerationAiWorkflowV2.version, voluviaVideoPackageGenerationAiWorkflowV2.steps[1].operation]
+  ], [
+    [1, 'voluvia.video.package.generate.ai'],
+    [2, 'voluvia.video.package.generate.ai.v2']
+  ]);
+  assert.equal(new Set([voluviaVideoPackageGenerationAiWorkflow.steps[1].operation,
+    voluviaVideoPackageGenerationAiWorkflowV2.steps[1].operation]).size, 2);
+});
+
+test('legacy and v5 canonical render identities are frozen, distinct, and deterministic', async () => {
+  const legacy = validateStandaloneM3Package(await packageFixture());
+  const current = validateStandaloneM3Package(await packageFixtureV5());
+  const identify = validated => calculateCanonicalRenderIdentity(
+    compileRenderManifest(validated.package, validated.packageRevisionHash),
+    selectRenderer(validated.package, selection()));
+  const legacyIdentity = identify(legacy); const first = identify(current); const second = identify(current);
+  assert.equal(legacyIdentity, '4e7a56119242961a4bd4495d161202a971ad007b8bde905f32fd3c4178a59b4a');
+  assert.equal(first, second); assert.notEqual(first, legacyIdentity);
 });
 
 test('standalone integrity rejects unsafe descriptors and strict-shape drift', async (t) => {

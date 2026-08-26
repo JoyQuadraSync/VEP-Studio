@@ -1,4 +1,5 @@
 import { VOLUVIA_VIDEO_PACKAGE_DE_V4_PROMPT_SHA256 } from '../../prompts/voluvia/de/video-package-generator-v4.prompt';
+import { VOLUVIA_VIDEO_PACKAGE_DE_V5_PROMPT_SHA256 } from '../../prompts/voluvia/de/video-package-generator-v5.prompt';
 import { z } from 'zod';
 import {
   APPROVED_PRODUCT_FACT_IDS, AUDIENCE_AWARENESS_LEVELS, AUDIENCE_CONCERNS,
@@ -8,7 +9,7 @@ import {
 import {
   VIDEO_CAMERA_FRAMINGS, VIDEO_TEXT_STYLE_ROLES, VIDEO_TRANSITION_TYPES,
   VIDEO_VISUAL_PROOF_ROLES, VOLUVIA_VIDEO_ASSET_IDS, VOLUVIA_VIDEO_PACKAGE_OPERATION_ID,
-  VOLUVIA_VIDEO_PACKAGE_PROMPT_REFERENCE,
+  VOLUVIA_VIDEO_PACKAGE_OPERATION_V2_ID, VOLUVIA_VIDEO_PACKAGE_PROMPT_REFERENCE,
   VoluviaVideoPackage
 } from '../../workflows/examples/voluvia/video-package/voluvia-video-package-contracts';
 import {
@@ -32,14 +33,10 @@ const segment = z.object({ segmentId: z.string().regex(/^segment-[0-9]{2}$/u),
   sceneId: z.string().regex(/^scene-[0-9]{2}$/u), sourceScene: z.enum(SUGGESTED_SCENES),
   spokenText: z.string().min(1), estimatedSeconds: z.number().int().positive().safe(),
   claimsUsed: z.array(z.enum(APPROVED_PRODUCT_FACT_IDS)) }).strict();
-const finalPackageSchema = z.object({
-  packageId: sha, operationId: z.literal(VOLUVIA_VIDEO_PACKAGE_OPERATION_ID), schemaVersion: z.literal(1),
+const finalPackageShape = {
+  packageId: sha,
   sourcePlan: z.object({ workflowId: z.literal('voluvia.tiktok.contentplanning.ai.workflow'),
     workflowVersion: z.literal(1), operationId: z.literal('voluvia.content.plan.ai'), sourcePlanHash: sha }).strict(),
-  provenance: z.object({ provider: z.string().min(1).max(100), model: z.string().min(1).max(200),
-    promptId: z.literal(VOLUVIA_VIDEO_PACKAGE_PROMPT_REFERENCE.promptId), promptVersion: z.literal(4),
-    promptContentHash: z.literal(VOLUVIA_VIDEO_PACKAGE_DE_V4_PROMPT_SHA256),
-    generatedAt: z.string().datetime({ offset: true }) }).strict(),
   summary: z.object({ audience: z.object({ gender: z.literal('women'), primaryConcern: z.enum(AUDIENCE_CONCERNS),
     awarenessLevel: z.enum(AUDIENCE_AWARENESS_LEVELS) }).strict(), strategy,
     language: z.literal('de-DE'), platform: z.literal('TikTok'),
@@ -83,7 +80,18 @@ const finalPackageSchema = z.object({
       deliveryClaimsEnabled: z.literal(false) }).strict(), unsupportedClaimScanPassed: z.literal(true),
     sceneCompatibilityPassed: z.literal(true), assetCompatibilityPassed: z.literal(true) }).strict(),
   packageReviewStatus: z.literal('pending_manual_review')
-}).strict();
+} as const;
+const provenanceShape = { provider: z.string().min(1).max(100), model: z.string().min(1).max(200),
+  promptId: z.literal(VOLUVIA_VIDEO_PACKAGE_PROMPT_REFERENCE.promptId),
+  generatedAt: z.string().datetime({ offset: true }) } as const;
+const finalPackageSchema = z.discriminatedUnion('operationId', [
+  z.object({ ...finalPackageShape, operationId: z.literal(VOLUVIA_VIDEO_PACKAGE_OPERATION_ID),
+    schemaVersion: z.literal(1), provenance: z.object({ ...provenanceShape, promptVersion: z.literal(4),
+      promptContentHash: z.literal(VOLUVIA_VIDEO_PACKAGE_DE_V4_PROMPT_SHA256) }).strict() }).strict(),
+  z.object({ ...finalPackageShape, operationId: z.literal(VOLUVIA_VIDEO_PACKAGE_OPERATION_V2_ID),
+    schemaVersion: z.literal(1), provenance: z.object({ ...provenanceShape, promptVersion: z.literal(5),
+      promptContentHash: z.literal(VOLUVIA_VIDEO_PACKAGE_DE_V5_PROMPT_SHA256) }).strict() }).strict()
+]);
 
 const ROOT_KEYS = ['assetChecklist', 'caption', 'cover', 'hashtags', 'hook', 'narrationPackage',
   'onScreenText', 'operationId', 'packageId', 'packageReviewStatus', 'provenance', 'safety',
@@ -146,6 +154,8 @@ function detachFreeze<T>(value: T): T {
 
 export function validateStandaloneM3Package(value: unknown, options: M3PackageIntegrityOptions = {}): ValidatedM3Package {
   try { canonicalizeVideoPackageValue(value); } catch { fail('unsafe_json'); }
+  if (typeof value === 'object' && value !== null && !Array.isArray(value) &&
+      Object.keys(value).some((key) => !ROOT_KEYS.includes(key as typeof ROOT_KEYS[number]))) fail('unknown_field');
   const parsed = finalPackageSchema.safeParse(value);
   if (!parsed.success) {
     if (parsed.error.issues.some((issue) => issue.code === 'unrecognized_keys')) fail('unknown_field');
@@ -155,16 +165,14 @@ export function validateStandaloneM3Package(value: unknown, options: M3PackageIn
     fail('package_validation_failed');
   }
   const candidate = parsed.data as VoluviaVideoPackage;
-  if (!/^[a-f0-9]{64}$/u.test(candidate.packageId) || candidate.operationId !== VOLUVIA_VIDEO_PACKAGE_OPERATION_ID ||
-      candidate.schemaVersion !== 1 || candidate.packageReviewStatus !== 'pending_manual_review') fail('invalid_source_identity');
+  if (!/^[a-f0-9]{64}$/u.test(candidate.packageId) || candidate.schemaVersion !== 1 ||
+      candidate.packageReviewStatus !== 'pending_manual_review') fail('invalid_source_identity');
   exact(candidate.sourcePlan, KEYS.sourcePlan!);
   if (candidate.sourcePlan.workflowId !== 'voluvia.tiktok.contentplanning.ai.workflow' ||
       candidate.sourcePlan.workflowVersion !== 1 || candidate.sourcePlan.operationId !== 'voluvia.content.plan.ai' ||
       !/^[a-f0-9]{64}$/u.test(candidate.sourcePlan.sourcePlanHash)) fail('invalid_source_identity');
   exact(candidate.provenance, KEYS.provenance!);
-  if (candidate.provenance.promptId !== VOLUVIA_VIDEO_PACKAGE_PROMPT_REFERENCE.promptId ||
-      candidate.provenance.promptVersion !== 4 || candidate.provenance.promptContentHash !== VOLUVIA_VIDEO_PACKAGE_DE_V4_PROMPT_SHA256 ||
-      !Number.isFinite(Date.parse(candidate.provenance.generatedAt))) fail('invalid_source_identity');
+  if (!Number.isFinite(Date.parse(candidate.provenance.generatedAt))) fail('invalid_source_identity');
   exact(candidate.summary, KEYS.summary!); exact(candidate.summary.audience, KEYS.audience!);
   exact(candidate.summary.strategy, KEYS.strategy!); exactOptional(candidate.hook, KEYS.hook!, ['visualHookInstruction']);
   exact(candidate.voiceover, KEYS.voiceover!); exactOptional(candidate.narrationPackage, KEYS.narrationPackage!, ['backgroundAssetId']);
