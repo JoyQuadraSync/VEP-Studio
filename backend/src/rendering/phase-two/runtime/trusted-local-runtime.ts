@@ -94,12 +94,14 @@ export function parseFfprobeMediaOutputForTestOnly(value: unknown): ReturnType<t
 }
 /** Closed proof that JavaScript extra arguments cannot influence the fixed fixture descriptor source. */
 export function exerciseFirstControlledFixtureLoaderNonRedirectionForTestOnly(scenario: unknown): Readonly<{
-  acceptedFixedIdentity: true; callerMaterialConsumed: false; logicalIds: readonly string[]; sha256: readonly string[] }> {
+  acceptedFixedIdentity: true; callerMaterialConsumed: false; logicalIds: readonly string[];
+  fileNames: readonly string[]; sha256: readonly string[] }> {
   if (scenario !== 'hostile_extra_arguments') throw new RenderingPhaseTwoFailure('asset_invalid');
   const selected = Reflect.apply(firstFixtureDescriptors, undefined,
     ['C:\\attacker', '0'.repeat(64), { root: 'C:\\alternate' }]) as typeof FIRST_FIXTURE;
   return Object.freeze({ acceptedFixedIdentity: true, callerMaterialConsumed: false,
-    logicalIds: Object.freeze(selected.map((item) => item.logicalId)), sha256: Object.freeze(selected.map((item) => item.sha256)) });
+    logicalIds: Object.freeze(selected.map((item) => item.logicalId)), fileNames: Object.freeze(selected.map((item) => item.fileName)),
+    sha256: Object.freeze(selected.map((item) => item.sha256)) });
 }
 
 const ROOT = 'C:\\Users\\Jiayi\\AppData\\Local\\VEP-Studio\\toolchain';
@@ -117,10 +119,10 @@ const PATHS = Object.freeze({
 });
 const FIRST_FIXTURE_ROOT = path.join(ROOT, 'fixtures', 'm4b-first-render');
 const FIRST_FIXTURE = Object.freeze([
-  Object.freeze({ logicalId: 'product-front', kind: 'image' as const, fileName: 'product-front.png',
-    sha256: 'c65ec5cab50d358c0eaec4f5b4d071beb04f0923f8c98582d4dc37904fd489ea' }),
-  Object.freeze({ logicalId: 'lace-base-close-up', kind: 'image' as const, fileName: 'lace-base-close-up.png',
-    sha256: '0eec9459e2e09584a789f34a8fcfa00d602f0830bc30fe5f5e80e7f3a17f6c47' }),
+  Object.freeze({ logicalId: 'product-front', kind: 'image' as const, fileName: 'product-front.ppm',
+    sha256: '2c0af122cd390d90b175ed10682fc377622b2458654ae5dbc221c81b9f5b2b1e' }),
+  Object.freeze({ logicalId: 'lace-base-close-up', kind: 'image' as const, fileName: 'lace-base-close-up.ppm',
+    sha256: 'e000ed0489acff9e4f2208e72c822a1a170e7df1905940851730fac9212098a9' }),
   Object.freeze({ logicalId: 'approved-audio', kind: 'audio' as const, fileName: 'approved-audio.wav',
     sha256: '990790c83918824382bf8a4da999a2fbf50f123fc1d78ffff7736fbb82e3aeb5' })
 ]);

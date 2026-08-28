@@ -1077,17 +1077,20 @@ test('strict FFprobe JSON parser accepts only the frozen ordered MP4 output cont
 test('frozen first-controlled fixture digest set is exact and caller cannot redirect its zero-input loader', () => {
   const validate = require('../dist/rendering/phase-two/fixture/deterministic-render-fixture').validateFirstControlledFixtureAssetsForTestOnly;
   const expected = [
-    { logicalId: 'product-front', sha256: 'c65ec5cab50d358c0eaec4f5b4d071beb04f0923f8c98582d4dc37904fd489ea' },
-    { logicalId: 'lace-base-close-up', sha256: '0eec9459e2e09584a789f34a8fcfa00d602f0830bc30fe5f5e80e7f3a17f6c47' },
+    { logicalId: 'product-front', sha256: '2c0af122cd390d90b175ed10682fc377622b2458654ae5dbc221c81b9f5b2b1e' },
+    { logicalId: 'lace-base-close-up', sha256: 'e000ed0489acff9e4f2208e72c822a1a170e7df1905940851730fac9212098a9' },
     { logicalId: 'approved-audio', sha256: '990790c83918824382bf8a4da999a2fbf50f123fc1d78ffff7736fbb82e3aeb5' }
   ];
   assert.equal(validate('valid'), 'accepted');
+  assert.equal(validate('legacy_png_visuals'), 'asset_invalid');
   for (const scenario of ['product_front_substituted', 'lace_base_substituted', 'audio_substituted'])
     assert.equal(validate(scenario), 'asset_invalid');
   assert.equal(trustedLocalRuntimeModule.loadFirstControlledFixtureAssets.length, 0);
   const nonRedirected = trustedLocalRuntimeModule.exerciseFirstControlledFixtureLoaderNonRedirectionForTestOnly('hostile_extra_arguments');
   assert.deepEqual(nonRedirected, { acceptedFixedIdentity: true, callerMaterialConsumed: false,
-    logicalIds: expected.map((item) => item.logicalId), sha256: expected.map((item) => item.sha256) });
+    logicalIds: expected.map((item) => item.logicalId),
+    fileNames: ['product-front.ppm', 'lace-base-close-up.ppm', 'approved-audio.wav'],
+    sha256: expected.map((item) => item.sha256) });
 });
 
 test('fixture rejects duration and local/probe size mismatch after processing and still cleans its workspace', async t => {

@@ -31,8 +31,8 @@ export interface FixtureRenderServices { readonly environment: TrustedPhaseTwoEn
 const compositions = new WeakSet<object>();
 const fixtureResolvedExecutions = new WeakSet<object>();
 const FIRST_FIXTURE_HASHES = Object.freeze({
-  'product-front': 'c65ec5cab50d358c0eaec4f5b4d071beb04f0923f8c98582d4dc37904fd489ea',
-  'lace-base-close-up': '0eec9459e2e09584a789f34a8fcfa00d602f0830bc30fe5f5e80e7f3a17f6c47',
+  'product-front': '2c0af122cd390d90b175ed10682fc377622b2458654ae5dbc221c81b9f5b2b1e',
+  'lace-base-close-up': 'e000ed0489acff9e4f2208e72c822a1a170e7df1905940851730fac9212098a9',
   'approved-audio': '990790c83918824382bf8a4da999a2fbf50f123fc1d78ffff7736fbb82e3aeb5'
 } as const);
 const EVIDENCE_ROOT = 'C:\\Users\\Jiayi\\AppData\\Local\\VEP-Studio\\toolchain\\evidence\\renders\\first-controlled';
@@ -47,12 +47,16 @@ export class TrustedPhaseTwoFixtureComposition {
 }
 /** Closed identity check; it accepts no paths, bytes, hashes, callbacks, or authority. */
 export function validateFirstControlledFixtureAssetsForTestOnly(scenario: unknown): 'accepted' | 'asset_invalid' {
-  if (!['valid', 'product_front_substituted', 'lace_base_substituted', 'audio_substituted'].includes(scenario as string))
+  if (!['valid', 'legacy_png_visuals', 'product_front_substituted', 'lace_base_substituted', 'audio_substituted'].includes(scenario as string))
     throw new RenderingPhaseTwoFailure('asset_invalid');
   const selected: { logicalId: string; sha256: string }[] =
     Object.entries(FIRST_FIXTURE_HASHES).map(([logicalId, sha256]) => ({ logicalId, sha256 }));
   const substitutedIndex = scenario === 'product_front_substituted' ? 0 : scenario === 'lace_base_substituted' ? 1 :
     scenario === 'audio_substituted' ? 2 : -1;
+  if (scenario === 'legacy_png_visuals') {
+    selected[0] = { ...selected[0]!, sha256: 'c65ec5cab50d358c0eaec4f5b4d071beb04f0923f8c98582d4dc37904fd489ea' };
+    selected[1] = { ...selected[1]!, sha256: '0eec9459e2e09584a789f34a8fcfa00d602f0830bc30fe5f5e80e7f3a17f6c47' };
+  }
   if (substitutedIndex >= 0) selected[substitutedIndex] = { ...selected[substitutedIndex]!, sha256: '0'.repeat(64) };
   try { validateFirstControlledDigests(selected); return 'accepted'; }
   catch (error) { if (error instanceof RenderingPhaseTwoFailure && error.code === 'asset_invalid') return 'asset_invalid'; throw error; }
