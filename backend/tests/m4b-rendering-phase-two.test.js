@@ -24,9 +24,9 @@ const mediaInspectionModule = require('../dist/rendering/phase-two/inspection/me
 const { getTrustedInputVideoDuration, getTrustedMediaInspector, TrustedInputVideoInspection,
   TrustedMediaInspector } = mediaInspectionModule;
 const processRunnerModule = require('../dist/rendering/phase-two/process/ffmpeg-process-runner');
-const { diagnoseNonzeroExitCauseForTestOnly, diagnoseProcessFailureForTestOnly,
-  exerciseNonzeroExitCauseClassificationForTestOnly, exerciseProcessFailureClassificationForTestOnly,
-  exerciseRegisteredNonzeroExitCauseForTestOnly, exerciseRegisteredProcessFailureForTestOnly,
+const { diagnoseNonzeroExitCauseForTestOnly, diagnoseNonzeroExitDiagnosticSignalForTestOnly, diagnoseProcessFailureForTestOnly,
+  exerciseNonzeroExitCauseClassificationForTestOnly, exerciseNonzeroExitDiagnosticSignalForTestOnly, exerciseProcessFailureClassificationForTestOnly,
+  exerciseRegisteredNonzeroExitCauseForTestOnly, exerciseRegisteredNonzeroExitDiagnosticSignalForTestOnly, exerciseRegisteredProcessFailureForTestOnly,
   exerciseStderrLimitNonzeroCollisionForTestOnly, NodeFfmpegProcessRunner, simulateWindowsTerminationTestOnly, unixProcessGroupTargetTestOnly,
   windowsTaskkillArgsTestOnly } = processRunnerModule;
 const trustedLocalRuntimeModule = require('../dist/rendering/phase-two/runtime/trusted-local-runtime');
@@ -989,6 +989,7 @@ test('stderr containment overrides nonzero exit and prevents cause-family regist
   assert.ok(failure instanceof RenderingPhaseTwoFailure); assert.equal(failure.code, 'process_failed');
   assert.deepEqual(diagnoseProcessFailureForTestOnly(failure), { available: true, subcategory: 'stderr_limit' });
   assert.deepEqual(diagnoseNonzeroExitCauseForTestOnly(failure), { available: false });
+  assert.deepEqual(diagnoseNonzeroExitDiagnosticSignalForTestOnly(failure), { available: false });
   assert.deepEqual(Object.keys(failure).sort(), ['code', 'name']);
   assert.equal('causeFamily' in failure, false); assert.equal('stderr' in failure, false);
   assert.equal(exerciseStderrLimitNonzeroCollisionForTestOnly.length, 0);
@@ -1001,6 +1002,56 @@ test('stderr containment overrides nonzero exit and prevents cause-family regist
   try { exerciseRegisteredNonzeroExitCauseForTestOnly('unknown_nonzero_exit'); } catch (error) { unknownNonzero = error; }
   assert.deepEqual(diagnoseNonzeroExitCauseForTestOnly(unknownNonzero),
     { available: true, causeFamily: 'unknown_nonzero_exit' });
+});
+
+test('frozen-source nonzero-exit signals are exact, closed, and specific-before-generic', async t => {
+  const cases = [
+    ['openh264_create_encoder_failed', 'openh264_create_encoder_failed'],
+    ['openh264_initialize_failed', 'openh264_initialize_failed'],
+    ['openh264_encode_frame_failed', 'openh264_encode_frame_failed'],
+    ['openh264_invalid_max_nal_size', 'openh264_invalid_max_nal_size'],
+    ['decoder_initialization_failed', 'decoder_initialization_failed'],
+    ['filter_initialization_failed', 'filter_initialization_failed'],
+    ['filter_configuration_failed', 'filter_configuration_failed'],
+    ['unknown_nonzero_exit_signal', 'unknown_nonzero_exit_signal'],
+    ['specific_before_generic', 'openh264_initialize_failed']
+  ];
+  for (const [scenario, signal] of cases) await t.test(scenario, () => {
+    const result = exerciseNonzeroExitDiagnosticSignalForTestOnly(scenario);
+    assert.deepEqual(result, { signal }); assert.equal(Object.isFrozen(result), true);
+    assert.deepEqual(Object.keys(result), ['signal']);
+  });
+  for (const hostile of [undefined, null, '', 'Initialize failed', {}, [], Buffer.from('Initialize failed'),
+    { scenario: 'openh264_initialize_failed' }, 'C:\\ffmpeg.exe', ['-i'], { PATH: 'hostile' }])
+    fails(() => exerciseNonzeroExitDiagnosticSignalForTestOnly(hostile), 'process_failed');
+  assert.equal(exerciseNonzeroExitDiagnosticSignalForTestOnly.length, 1);
+});
+
+test('nonzero-exit signal diagnosis is bound only to the exact shared failure object', async t => {
+  const signals = ['openh264_create_encoder_failed', 'openh264_initialize_failed', 'openh264_encode_frame_failed',
+    'openh264_invalid_max_nal_size', 'decoder_initialization_failed', 'filter_initialization_failed',
+    'filter_configuration_failed', 'unknown_nonzero_exit_signal'];
+  for (const scenario of signals) await t.test(scenario, () => {
+    let failure;
+    try { exerciseRegisteredNonzeroExitDiagnosticSignalForTestOnly(scenario); } catch (error) { failure = error; }
+    assert.ok(failure instanceof RenderingPhaseTwoFailure); assert.equal(failure.code, 'process_failed');
+    assert.deepEqual(diagnoseProcessFailureForTestOnly(failure), { available: true, subcategory: 'nonzero_exit' });
+    assert.deepEqual(diagnoseNonzeroExitDiagnosticSignalForTestOnly(failure), { available: true, signal: scenario });
+    assert.deepEqual(Object.keys(failure).sort(), ['code', 'name']);
+    for (const forged of [new Error(), { ...failure }, JSON.parse(JSON.stringify(failure)),
+      Object.assign(Object.create(Object.getPrototypeOf(failure)), failure), { code: failure.code },
+      Object.freeze({ code: failure.code, name: failure.name })])
+      assert.deepEqual(diagnoseNonzeroExitDiagnosticSignalForTestOnly(forged), { available: false });
+  });
+  for (const scenario of ['spawn_error', 'signal', 'timeout', 'stderr_limit', 'process_adapter']) await t.test(`unavailable-${scenario}`, () => {
+    let failure;
+    try { exerciseRegisteredProcessFailureForTestOnly(scenario); } catch (error) { failure = error; }
+    assert.deepEqual(diagnoseNonzeroExitDiagnosticSignalForTestOnly(failure), { available: false });
+  });
+  for (const unavailable of [undefined, null, '', 1, Symbol('failure'), () => {}])
+    assert.deepEqual(diagnoseNonzeroExitDiagnosticSignalForTestOnly(unavailable), { available: false });
+  assert.equal(diagnoseNonzeroExitDiagnosticSignalForTestOnly.length, 1);
+  assert.equal(exerciseRegisteredNonzeroExitDiagnosticSignalForTestOnly.length, 1);
 });
 
 async function orchestrationHarness(overrides = {}) {

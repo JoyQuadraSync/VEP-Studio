@@ -14,6 +14,9 @@ interface ProcessInvocationAdapter {
 type ProcessFailureSubcategory = 'spawn_error' | 'nonzero_exit' | 'signal' | 'timeout' | 'stderr_limit' | 'process_adapter';
 type NonzeroExitCauseFamily = 'resource_or_io' | 'invalid_option' | 'drawtext_or_font' | 'input_open_or_decode' |
   'filtergraph_parse_or_init' | 'encoder_initialization' | 'muxer_or_output' | 'unknown_nonzero_exit';
+type NonzeroExitDiagnosticSignal = 'openh264_create_encoder_failed' | 'openh264_initialize_failed' |
+  'openh264_encode_frame_failed' | 'openh264_invalid_max_nal_size' | 'decoder_initialization_failed' |
+  'filter_initialization_failed' | 'filter_configuration_failed' | 'unknown_nonzero_exit_signal';
 type ProcessFailureObservation = Readonly<
   | { kind: 'spawn_error' | 'process_adapter' }
   | { kind: 'completed'; exitCode: number; timedOut: boolean; stderrBytes: number; signalTerminated: boolean;
@@ -22,9 +25,11 @@ interface ProcessFailureClassification {
   readonly outcome: 'success' | 'process_failed' | 'process_timeout';
   readonly subcategory?: ProcessFailureSubcategory;
   readonly nonzeroExitCause?: NonzeroExitCauseFamily;
+  readonly nonzeroExitDiagnosticSignal?: NonzeroExitDiagnosticSignal;
 }
 const processFailureDiagnostics = new WeakMap<object, ProcessFailureSubcategory>();
 const nonzeroExitCauseDiagnostics = new WeakMap<object, NonzeroExitCauseFamily>();
+const nonzeroExitDiagnosticSignals = new WeakMap<object, NonzeroExitDiagnosticSignal>();
 const STDERR_LIMIT_BYTES = 64 * 1024;
 const PROCESS_FAILURE_SCENARIOS: readonly ProcessFailureSubcategory[] = Object.freeze([
   'spawn_error', 'nonzero_exit', 'signal', 'timeout', 'stderr_limit', 'process_adapter'
@@ -35,6 +40,12 @@ const NONZERO_EXIT_CAUSE_SCENARIOS = Object.freeze([
   'generic_invalid_argument_only'
 ] as const);
 type NonzeroExitCauseScenario = typeof NONZERO_EXIT_CAUSE_SCENARIOS[number];
+const NONZERO_EXIT_DIAGNOSTIC_SIGNAL_SCENARIOS = Object.freeze([
+  'openh264_create_encoder_failed', 'openh264_initialize_failed', 'openh264_encode_frame_failed',
+  'openh264_invalid_max_nal_size', 'decoder_initialization_failed', 'filter_initialization_failed',
+  'filter_configuration_failed', 'unknown_nonzero_exit_signal', 'specific_before_generic'
+] as const);
+type NonzeroExitDiagnosticSignalScenario = typeof NONZERO_EXIT_DIAGNOSTIC_SIGNAL_SCENARIOS[number];
 const NONZERO_EXIT_MARKERS: readonly Readonly<{ causeFamily: Exclude<NonzeroExitCauseFamily, 'unknown_nonzero_exit'>;
   markers: readonly Uint8Array[] }>[] = Object.freeze([
   Object.freeze({ causeFamily: 'resource_or_io', markers: Object.freeze([
@@ -54,6 +65,23 @@ const NONZERO_EXIT_MARKERS: readonly Readonly<{ causeFamily: Exclude<NonzeroExit
   Object.freeze({ causeFamily: 'muxer_or_output', markers: Object.freeze([
     Buffer.from('error opening output file', 'ascii'), Buffer.from('could not write header', 'ascii')]) })
 ]);
+const NONZERO_EXIT_DIAGNOSTIC_SIGNAL_MARKERS: readonly Readonly<{
+  signal: Exclude<NonzeroExitDiagnosticSignal, 'unknown_nonzero_exit_signal'>; markers: readonly Uint8Array[] }>[] = Object.freeze([
+  Object.freeze({ signal: 'openh264_create_encoder_failed', markers: Object.freeze([
+    Buffer.from('unable to create encoder', 'ascii')]) }),
+  Object.freeze({ signal: 'openh264_initialize_failed', markers: Object.freeze([
+    Buffer.from('initialize failed', 'ascii')]) }),
+  Object.freeze({ signal: 'openh264_encode_frame_failed', markers: Object.freeze([
+    Buffer.from('encodeframe failed', 'ascii')]) }),
+  Object.freeze({ signal: 'openh264_invalid_max_nal_size', markers: Object.freeze([
+    Buffer.from('invalid -max_nal_size', 'ascii')]) }),
+  Object.freeze({ signal: 'decoder_initialization_failed', markers: Object.freeze([
+    Buffer.from('error while opening decoder:', 'ascii'), Buffer.from('error opening decoder', 'ascii')]) }),
+  Object.freeze({ signal: 'filter_configuration_failed', markers: Object.freeze([
+    Buffer.from('error configuring filter graph:', 'ascii'), Buffer.from('failed to configure output pad on', 'ascii')]) }),
+  Object.freeze({ signal: 'filter_initialization_failed', markers: Object.freeze([
+    Buffer.from('error initializing filters', 'ascii'), Buffer.from('error reinitializing filters', 'ascii')]) })
+]);
 class ProcessInvocationFailure {
   readonly subcategory: 'spawn_error';
   constructor() { this.subcategory = 'spawn_error'; Object.freeze(this); }
@@ -65,6 +93,9 @@ function isProcessFailureSubcategory(value: unknown): value is ProcessFailureSub
 }
 function isNonzeroExitCauseScenario(value: unknown): value is NonzeroExitCauseScenario {
   return typeof value === 'string' && NONZERO_EXIT_CAUSE_SCENARIOS.some((scenario) => scenario === value);
+}
+function isNonzeroExitDiagnosticSignalScenario(value: unknown): value is NonzeroExitDiagnosticSignalScenario {
+  return typeof value === 'string' && NONZERO_EXIT_DIAGNOSTIC_SIGNAL_SCENARIOS.some((scenario) => scenario === value);
 }
 function foldAscii(bytes: Uint8Array): Uint8Array {
   const folded = new Uint8Array(Math.min(bytes.byteLength, STDERR_LIMIT_BYTES));
@@ -88,6 +119,12 @@ function classifyNonzeroExitCause(bytes: Uint8Array): NonzeroExitCauseFamily {
     if (family.markers.some((marker) => containsBytes(folded, marker))) return family.causeFamily;
   return 'unknown_nonzero_exit';
 }
+function classifyNonzeroExitDiagnosticSignal(bytes: Uint8Array): NonzeroExitDiagnosticSignal {
+  const folded = foldAscii(bytes);
+  for (const entry of NONZERO_EXIT_DIAGNOSTIC_SIGNAL_MARKERS)
+    if (entry.markers.some((marker) => containsBytes(folded, marker))) return entry.signal;
+  return 'unknown_nonzero_exit_signal';
+}
 function appendBoundedStderr(chunks: readonly Uint8Array[], chunk: Uint8Array): readonly Uint8Array[] {
   const retainedBytes = chunks.reduce((total, current) => total + current.byteLength, 0);
   const remaining = STDERR_LIMIT_BYTES - retainedBytes;
@@ -104,7 +141,8 @@ function classifyProcessObservation(observation: ProcessFailureObservation): Rea
       if (observation.signalTerminated) return Object.freeze({ outcome: 'process_failed', subcategory: 'signal' });
       if (observation.stderrBytes > STDERR_LIMIT_BYTES) return Object.freeze({ outcome: 'process_failed', subcategory: 'stderr_limit' });
       if (observation.exitCode !== 0) return Object.freeze({ outcome: 'process_failed', subcategory: 'nonzero_exit',
-        nonzeroExitCause: classifyNonzeroExitCause(observation.boundedStderr) });
+        nonzeroExitCause: classifyNonzeroExitCause(observation.boundedStderr),
+        nonzeroExitDiagnosticSignal: classifyNonzeroExitDiagnosticSignal(observation.boundedStderr) });
       return Object.freeze({ outcome: 'success' });
     default: return assertNever(observation);
   }
@@ -116,6 +154,8 @@ function createRegisteredProcessFailure(classified: Readonly<ProcessFailureClass
   processFailureDiagnostics.set(failure, classified.subcategory);
   if (classified.subcategory === 'nonzero_exit' && classified.nonzeroExitCause !== undefined)
     nonzeroExitCauseDiagnostics.set(failure, classified.nonzeroExitCause);
+  if (classified.subcategory === 'nonzero_exit' && classified.nonzeroExitDiagnosticSignal !== undefined)
+    nonzeroExitDiagnosticSignals.set(failure, classified.nonzeroExitDiagnosticSignal);
   return failure;
 }
 
@@ -133,6 +173,13 @@ export function diagnoseNonzeroExitCauseForTestOnly(error: unknown): Readonly<
   if (typeof error !== 'object' || error === null) return Object.freeze({ available: false });
   const causeFamily = nonzeroExitCauseDiagnostics.get(error);
   return causeFamily === undefined ? Object.freeze({ available: false }) : Object.freeze({ available: true, causeFamily });
+}
+export function diagnoseNonzeroExitDiagnosticSignalForTestOnly(error: unknown): Readonly<
+  | { available: true; signal: NonzeroExitDiagnosticSignal }
+  | { available: false }> {
+  if (typeof error !== 'object' || error === null) return Object.freeze({ available: false });
+  const signal = nonzeroExitDiagnosticSignals.get(error);
+  return signal === undefined ? Object.freeze({ available: false }) : Object.freeze({ available: true, signal });
 }
 
 function causeScenarioChunks(scenario: NonzeroExitCauseScenario): readonly Uint8Array[] {
@@ -155,6 +202,26 @@ function boundedScenarioStderr(scenario: NonzeroExitCauseScenario): Uint8Array {
   for (const chunk of causeScenarioChunks(scenario)) chunks = appendBoundedStderr(chunks, chunk);
   return Uint8Array.from(Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))));
 }
+function diagnosticSignalScenarioChunks(scenario: NonzeroExitDiagnosticSignalScenario): readonly Uint8Array[] {
+  switch (scenario) {
+    case 'openh264_create_encoder_failed': return Object.freeze([Buffer.from('Unable to create encoder', 'ascii')]);
+    case 'openh264_initialize_failed': return Object.freeze([Buffer.from('Initialize failed', 'ascii')]);
+    case 'openh264_encode_frame_failed': return Object.freeze([Buffer.from('EncodeFrame failed', 'ascii')]);
+    case 'openh264_invalid_max_nal_size': return Object.freeze([Buffer.from('Invalid -max_nal_size, value rejected', 'ascii')]);
+    case 'decoder_initialization_failed': return Object.freeze([Buffer.from('Error while opening decoder: invalid data', 'ascii')]);
+    case 'filter_initialization_failed': return Object.freeze([Buffer.from('Error initializing filters!', 'ascii')]);
+    case 'filter_configuration_failed': return Object.freeze([Buffer.from('Error configuring filter graph: invalid argument', 'ascii')]);
+    case 'unknown_nonzero_exit_signal': return Object.freeze([Buffer.from('Conversion failed!', 'ascii')]);
+    case 'specific_before_generic': return Object.freeze([
+      Buffer.from('Error initializing filters! Initialize failed Conversion failed!', 'ascii')]);
+    default: return assertNever(scenario);
+  }
+}
+function boundedDiagnosticSignalScenarioStderr(scenario: NonzeroExitDiagnosticSignalScenario): Uint8Array {
+  let chunks: readonly Uint8Array[] = Object.freeze([]);
+  for (const chunk of diagnosticSignalScenarioChunks(scenario)) chunks = appendBoundedStderr(chunks, chunk);
+  return Uint8Array.from(Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))));
+}
 /** Closed byte-fixture harness. It accepts no stderr, process, path, or trust material. */
 export function exerciseNonzeroExitCauseClassificationForTestOnly(scenario: unknown): Readonly<{
   causeFamily: NonzeroExitCauseFamily }> {
@@ -165,6 +232,19 @@ export function exerciseNonzeroExitCauseClassificationForTestOnly(scenario: unkn
 export function exerciseRegisteredNonzeroExitCauseForTestOnly(scenario: unknown): never {
   if (!isNonzeroExitCauseScenario(scenario)) throw new RenderingPhaseTwoFailure('process_failed');
   const boundedStderr = boundedScenarioStderr(scenario);
+  throw createRegisteredProcessFailure(classifyProcessObservation({ kind: 'completed', exitCode: 1, timedOut: false,
+    stderrBytes: boundedStderr.byteLength, signalTerminated: false, boundedStderr }));
+}
+/** Closed frozen-source signal harness. It accepts no stderr, path, process, or trust material. */
+export function exerciseNonzeroExitDiagnosticSignalForTestOnly(scenario: unknown): Readonly<{
+  signal: NonzeroExitDiagnosticSignal }> {
+  if (!isNonzeroExitDiagnosticSignalScenario(scenario)) throw new RenderingPhaseTwoFailure('process_failed');
+  return Object.freeze({ signal: classifyNonzeroExitDiagnosticSignal(boundedDiagnosticSignalScenarioStderr(scenario)) });
+}
+/** Closed exact-object registration harness using the shared production observation and failure path. */
+export function exerciseRegisteredNonzeroExitDiagnosticSignalForTestOnly(scenario: unknown): never {
+  if (!isNonzeroExitDiagnosticSignalScenario(scenario)) throw new RenderingPhaseTwoFailure('process_failed');
+  const boundedStderr = boundedDiagnosticSignalScenarioStderr(scenario);
   throw createRegisteredProcessFailure(classifyProcessObservation({ kind: 'completed', exitCode: 1, timedOut: false,
     stderrBytes: boundedStderr.byteLength, signalTerminated: false, boundedStderr }));
 }
