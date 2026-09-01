@@ -110,6 +110,36 @@ export async function exerciseFirstControlledCompletionSequenceForTestOnly(scena
     cleanupInvocationCount: 1 as const } : { outcome, events: Object.freeze([...events]), retentionInvocationCount,
     cleanupInvocationCount: 1 as const, productionEligibility });
 }
+/** Closed synthetic lifecycle harness. It creates no workspace, process, media, or durable evidence. */
+export async function exerciseProcessFailureEvidenceLifecycleForTestOnly(scenario: unknown): Promise<Readonly<{
+  events: readonly string[]; originalFailureCode: 'process_failed'; persistenceAttempts: 1; cleanupCount: 1; releaseCount: 1 }>> {
+  if (scenario !== 'retained' && scenario !== 'persistence_failure') throw new RenderingPhaseTwoFailure('local_validation');
+  const events: string[] = []; let cleanupCount = 0; let releaseCount = 0; let persistenceAttempts = 0;
+  let originalFailureCode: 'process_failed' = 'process_failed';
+  const runtime = require('../runtime/trusted-local-runtime') as {
+    throwSyntheticFailureEvidenceLifecycleForTestOnly(value: unknown): Promise<never>;
+    diagnoseSyntheticFailureEvidenceLifecycleForTestOnly(value: unknown): Readonly<{
+      events: readonly string[]; persistence: 'retained' | 'unavailable' }> | undefined };
+  await executeProductionFixtureLifecycle(async () => {
+    await runtime.throwSyntheticFailureEvidenceLifecycleForTestOnly(scenario);
+  }, async () => { cleanupCount += 1; events.push('cleanup'); }, () => { releaseCount += 1; events.push('release'); }, async (failure) => {
+    const diagnosis = runtime.diagnoseSyntheticFailureEvidenceLifecycleForTestOnly(failure); if (!diagnosis) throw new Error();
+    events.push(...diagnosis.events); persistenceAttempts += 1;
+  }).catch((error: unknown) => { if (!(error instanceof RenderingPhaseTwoFailure) || error.code !== 'process_failed') throw error;
+    originalFailureCode = error.code; events.push('original_failure'); });
+  return Object.freeze({ events: Object.freeze(events), originalFailureCode, persistenceAttempts: persistenceAttempts as 1,
+    cleanupCount: cleanupCount as 1, releaseCount: releaseCount as 1 });
+}
+/** Closed success-path harness proving failure evidence is not invoked for a successful lifecycle. */
+export async function exerciseProcessFailureEvidenceSuccessForTestOnly(): Promise<Readonly<{
+  events: readonly string[]; persistenceAttempts: 0; cleanupCount: 1; releaseCount: 1 }>> {
+  const events: string[] = []; let persistenceAttempts = 0; let cleanupCount = 0; let releaseCount = 0;
+  await executeProductionFixtureLifecycle(async () => { events.push('process_success'); return undefined; },
+    async () => { cleanupCount += 1; events.push('cleanup'); }, () => { releaseCount += 1; events.push('release'); },
+    async () => { persistenceAttempts += 1; events.push('evidence_persist'); });
+  return Object.freeze({ events: Object.freeze(events), persistenceAttempts: persistenceAttempts as 0,
+    cleanupCount: cleanupCount as 1, releaseCount: releaseCount as 1 });
+}
 
 export async function renderDeterministicFixture(input: FixtureRenderInput,
   composition: TrustedPhaseTwoFixtureComposition): Promise<DeterministicRenderFixtureResult> {
@@ -125,7 +155,10 @@ async function renderContained(input: FixtureRenderInput,
   const verified = services.environment.verified;
   const runtime = require('../runtime/trusted-local-runtime') as { assertTrustedLocalComposition(value: unknown, services: readonly unknown[]): void;
     authorizeTrustedLocalResolvedExecution(composition: unknown, resolved: object): void;
-    revalidateTrustedCompositionForRender(value: unknown): Promise<void> };
+    revalidateTrustedCompositionForRender(value: unknown): Promise<void>;
+    createProcessFailureEvidenceAttemptInternal(composition: unknown, identities: unknown): object | undefined;
+    bindFailureEvidenceAttemptToResolvedExecutionInternal(composition: unknown, attempt: unknown, resolved: unknown): boolean;
+    persistProcessFailureEvidenceInternal(composition: unknown, attempt: unknown, failure: unknown): Promise<'retained' | 'unavailable'> };
   const trust = verified.executionTrust; if (getMediaInspectorTrust(services.inspector) !== trust || services.workspace.executionTrust !== trust)
     throw new RenderingPhaseTwoFailure('toolchain_invalid');
   if ((trust === 'test_only') === (services.processRunner instanceof NodeFfmpegProcessRunner)) throw new RenderingPhaseTwoFailure('toolchain_invalid');
@@ -140,6 +173,10 @@ async function renderContained(input: FixtureRenderInput,
   const logicalAssets: LogicalAssetReference[] = assets.map(({ logicalId, kind, durationSeconds }) =>
     durationSeconds === undefined ? { logicalId, kind } : { logicalId, kind, durationSeconds });
   const command = buildLogicalCommandManifest(input.phaseOne.manifest, logicalAssets);
+  const failureEvidenceAttempt = trust === 'trusted_local_reference' ? runtime.createProcessFailureEvidenceAttemptInternal(composition, {
+    packageId: input.phaseOne.sourcePackageId, packageRevisionHash: input.phaseOne.sourcePackageRevisionHash,
+    canonicalRenderIdentity: input.phaseOne.canonicalRenderIdentity, commandManifestSha256: command.commandManifestSha256,
+    referenceEnvironmentId: verified.referenceEnvironmentId }) : undefined;
   let workspace: Awaited<ReturnType<FixtureWorkspaceResolver['create']>> | undefined;
   let successfulResult: DeterministicRenderFixtureResult | undefined; let slotAcquired = false;
   return executeProductionFixtureLifecycle(async () => {
@@ -170,7 +207,9 @@ async function renderContained(input: FixtureRenderInput,
       if (value === verified.executablePath || value === verified.fontPath) return; services.workspace.assertIssued(workspace!, value);
     };
     const resolved = resolveExecutionManifest(command.logicalManifest, resolution, assertPath);
-    if (trust === 'trusted_local_reference') { fixtureResolvedExecutions.add(resolved); runtime.authorizeTrustedLocalResolvedExecution(composition, resolved); }
+    if (trust === 'trusted_local_reference') { fixtureResolvedExecutions.add(resolved); runtime.authorizeTrustedLocalResolvedExecution(composition, resolved);
+      if (!failureEvidenceAttempt || !runtime.bindFailureEvidenceAttemptToResolvedExecutionInternal(composition, failureEvidenceAttempt, resolved))
+        throw new RenderingPhaseTwoFailure('process_failed'); }
     await services.workspace.revalidate(workspace); const processResult = await services.processRunner.run(resolved);
     if (processResult.exitCode !== 0) throw new RenderingPhaseTwoFailure('process_failed');
     successfulResult = await completeRenderedFixture({ outputPath: workspace.outputMp4Path,
@@ -187,12 +226,17 @@ async function renderContained(input: FixtureRenderInput,
         retainFirstControlledEvidence(workspace!.outputMp4Path, artifact, inspection, result, verified.fontSha256) : undefined });
     return successfulResult;
   }, async () => { if (workspace) await services.workspace.cleanup(workspace); },
-  () => { if (slotAcquired) services.workspace.releaseRenderSlot(); });
+  () => { if (slotAcquired) services.workspace.releaseRenderSlot(); },
+  failureEvidenceAttempt === undefined ? undefined : async (failure) => {
+    await runtime.persistProcessFailureEvidenceInternal(composition, failureEvidenceAttempt, failure);
+  });
 }
-async function executeProductionFixtureLifecycle<T>(run: () => Promise<T>, cleanup: () => Promise<void>, release: () => void): Promise<T> {
+async function executeProductionFixtureLifecycle<T>(run: () => Promise<T>, cleanup: () => Promise<void>, release: () => void,
+  beforeCleanupFailure?: (failure: unknown) => Promise<void>): Promise<T> {
   let primaryFailure: unknown; let successful = false;
   try { const result = await run(); successful = true; return result; }
-  catch (error) { primaryFailure = error; if (error instanceof RenderingPhaseTwoFailure) throw error;
+  catch (error) { primaryFailure = error; if (beforeCleanupFailure) await beforeCleanupFailure(error).catch(() => undefined);
+    if (error instanceof RenderingPhaseTwoFailure) throw error;
     throw new RenderingPhaseTwoFailure('local_validation'); }
   finally {
     try { await cleanup(); } catch {

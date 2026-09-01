@@ -2,6 +2,38 @@
 
 All notable changes to VEP Studio will be documented in this file.
 
+## M4B Process-Failure Evidence Seam V1 — 2026-09-01
+
+### Added
+
+- closed-derived durable evidence for trusted-local render process failures
+- runtime-owned, exact-pair, one-use attempt authority
+- observation-specific and attempt-specific SHA-256 fingerprints
+- bounded and coarsened stderr-derived diagnostic observations
+- internally selected, no-clobber evidence persistence
+
+### Failure Containment
+
+- raw and redacted stderr persistence remain prohibited
+- persistence failure preserves the original rendering failure
+- no retry, repair, fallback, publishing, or production eligibility was added
+
+### Verification
+
+- `npm run typecheck` — passed
+- `npm run build` — passed
+- `npm test` — passed, 537/537 with 0 skipped
+- `git diff --check` — passed
+- fourth independent code review — passed
+- post-implementation architecture review — passed
+
+### Unresolved
+
+- sixth controlled render failed without retry
+- process failure remains `nonzero_exit` / `unknown_nonzero_exit` / `unknown_nonzero_exit_signal`
+- deterministic MP4 output is not yet verified
+- seventh controlled render has not been authorized or executed
+
 ## Sprint 011 — 2026-08-04
 
 ### Added

@@ -15,7 +15,7 @@ The semantic product version remains v0.3.0. Current development adds durable im
 | Area | Status |
 |---|---|
 | Completed Sprints | 11 |
-| Automated Tests | 69 passing |
+| Automated Tests | 537 passing, 0 skipped |
 | Event Platform | Stable foundation |
 | Strongly Typed Events | Complete |
 | Runtime Contracts | Complete |
@@ -81,6 +81,7 @@ The semantic product version remains v0.3.0. Current development adds durable im
 - recover exact immutable workflow definition versions
 - retain completed and failed parallel regions across serialization
 - separate typed persistence failures from workflow failures
+- retain closed-derived trusted-local process-failure evidence through runtime-owned attempt authority
 
 ## Completed Components
 
@@ -158,6 +159,14 @@ The semantic product version remains v0.3.0. Current development adds durable im
 - optimistic revision and write-ID protection
 - durable save points and resume
 
+### M4B Trusted-Local Process-Failure Evidence
+
+- closed-derived durable process-failure evidence
+- runtime-owned, exact-pair, one-use attempt authority
+- observation-specific and attempt-specific fingerprints
+- internally selected, no-clobber evidence persistence
+- persistence failure preserves the original rendering failure
+
 ## Architecture Health
 
 | Principle | Health | Evidence |
@@ -167,7 +176,8 @@ The semantic product version remains v0.3.0. Current development adds durable im
 | Determinism | Healthy | Injected clock and execution ID generation support controlled tests |
 | Immutability | Healthy | Definitions and execution transitions use readonly contracts and immutable snapshots |
 | Failure isolation | Healthy | Event subscribers and workflow operations produce isolated structured results |
-| Test coverage | Healthy | 69 tests cover events, definitions, validation, runtime, decisions, parallel execution, persistence, and recovery |
+| Test coverage | Healthy | 537 tests pass with 0 skipped, including trusted-local process-failure evidence boundaries |
+| M4B evidence seam | Healthy | Typecheck, build, 537/537 tests, and `git diff --check` passed; fourth independent code review and post-implementation architecture review passed |
 | Runtime coupling | Healthy | EventBus is outside workflow control flow; ExecutionContext remains event-specific |
 | Production readiness | Developing | A reference persistence boundary exists; durable database adapters, security, and observability remain future work |
 
@@ -193,6 +203,10 @@ The semantic product version remains v0.3.0. Current development adds durable im
 - workflow execution is not exposed through HTTP
 - EventBus does not yet trigger or receive workflow lifecycle notifications
 - authentication, authorization, observability, and production deployment are not complete
+- sixth controlled render failed without retry: `process_failed` → `nonzero_exit` → `unknown_nonzero_exit` → `unknown_nonzero_exit_signal`
+- FFmpeg failure remains unresolved and no deterministic MP4 has been verified
+- seventh controlled render is not authorized and has not been executed
+- controlled rendering remains `productionEligibility: prohibited`; publishing is not enabled
 
 ## Next Milestone
 

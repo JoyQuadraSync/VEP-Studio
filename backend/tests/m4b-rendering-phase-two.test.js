@@ -19,13 +19,15 @@ const { assertTrustedSubtitleLayout, buildCanonicalSrt, PHASE_TWO_SUBTITLE_STYLE
   TrustedSubtitleLayoutCapability, validateSubtitleGlyphCoverage } = require('../dist/rendering/phase-two/subtitles/subtitle-boundary');
 const { FixtureWorkspaceResolver } = require('../dist/rendering/phase-two/workspace/fixture-workspace');
 const { buildLogicalCommandManifest, resolveExecutionManifest } = require('../dist/rendering/phase-two/command/ffmpeg-command-manifest');
-const { renderDeterministicFixture, TrustedPhaseTwoFixtureComposition } = require('../dist/rendering/phase-two/fixture/deterministic-render-fixture');
+const fixtureModule = require('../dist/rendering/phase-two/fixture/deterministic-render-fixture');
+const { renderDeterministicFixture, TrustedPhaseTwoFixtureComposition } = fixtureModule;
 const mediaInspectionModule = require('../dist/rendering/phase-two/inspection/media-inspector');
 const { getTrustedInputVideoDuration, getTrustedMediaInspector, TrustedInputVideoInspection,
   TrustedMediaInspector } = mediaInspectionModule;
 const processRunnerModule = require('../dist/rendering/phase-two/process/ffmpeg-process-runner');
 const { diagnoseNonzeroExitCauseForTestOnly, diagnoseNonzeroExitDiagnosticSignalForTestOnly, diagnoseProcessFailureForTestOnly,
-  exerciseNonzeroExitCauseClassificationForTestOnly, exerciseNonzeroExitDiagnosticSignalForTestOnly, exerciseProcessFailureClassificationForTestOnly,
+  exerciseClosedObservationMatrixForTestOnly, exerciseClosedProcessFailureObservationForTestOnly, exerciseNonzeroExitCauseClassificationForTestOnly,
+  exerciseNonzeroExitDiagnosticSignalForTestOnly, exerciseProcessFailureClassificationForTestOnly,
   exerciseRegisteredNonzeroExitCauseForTestOnly, exerciseRegisteredNonzeroExitDiagnosticSignalForTestOnly, exerciseRegisteredProcessFailureForTestOnly,
   exerciseStderrLimitNonzeroCollisionForTestOnly, NodeFfmpegProcessRunner, simulateWindowsTerminationTestOnly, unixProcessGroupTargetTestOnly,
   windowsTaskkillArgsTestOnly } = processRunnerModule;
@@ -276,8 +278,12 @@ test('trusted-local lineage is unique and bounded hashing rejects growth and ear
 
 test('trusted-local source fixes cwd and Windows environment and contains no render call', async () => {
   const source = await readFile(path.join(__dirname, '..', 'src', 'rendering', 'phase-two', 'runtime', 'trusted-local-runtime.ts'), 'utf8');
+  const isolationStart = source.indexOf('export async function exerciseFailureEvidenceRootIsolationForTestOnly');
+  const isolationEnd = source.indexOf('/** Closed synthetic authority-chain harness.', isolationStart);
+  assert.ok(isolationStart >= 0 && isolationEnd > isolationStart);
+  const productionSource = `${source.slice(0, isolationStart)}${source.slice(isolationEnd)}`;
   assert.match(source, /cwd: FFMPEG_ROOT/u); assert.match(source, /env: \{ PATH: '', SystemRoot: 'C:\\\\Windows' \}/u);
-  assert.equal(source.includes('process.env.SYSTEMROOT'), false); assert.equal(source.includes('process.cwd'), false);
+  assert.equal(source.includes('process.env.SYSTEMROOT'), false); assert.equal(productionSource.includes('process.cwd'), false);
   assert.equal(source.includes('.run('), false); assert.equal(source.includes('fixture.mp4'), false); assert.equal(source.includes('subtitles.srt'), false);
 });
 
@@ -1052,6 +1058,153 @@ test('nonzero-exit signal diagnosis is bound only to the exact shared failure ob
     assert.deepEqual(diagnoseNonzeroExitDiagnosticSignalForTestOnly(unavailable), { available: false });
   assert.equal(diagnoseNonzeroExitDiagnosticSignalForTestOnly.length, 1);
   assert.equal(exerciseRegisteredNonzeroExitDiagnosticSignalForTestOnly.length, 1);
+});
+
+test('closed process-failure evidence is deterministic, bounded, private, and one-use', () => {
+  const first = exerciseClosedProcessFailureObservationForTestOnly('unknown_nonzero_exit_signal');
+  const repeated = exerciseClosedProcessFailureObservationForTestOnly('unknown_nonzero_exit_signal');
+  assert.equal(first.secondConsumptionAvailable, false);
+  assert.equal(first.observation.schemaVersion, 1);
+  assert.equal(first.observation.publicFailureCode, 'process_failed');
+  assert.equal(first.observation.processFailureSubcategory, 'nonzero_exit');
+  assert.equal(first.observation.causeFamily, 'unknown_nonzero_exit');
+  assert.equal(first.observation.diagnosticSignal, 'unknown_nonzero_exit_signal');
+  assert.match(first.observation.observationFingerprint, /^[a-f0-9]{64}$/u);
+  assert.equal(first.observation.observationFingerprint, repeated.observation.observationFingerprint);
+  assert.equal(first.observation.stderrObservation.totalByteCountBucket, 'one_to_1024');
+  assert.equal(first.observation.stderrObservation.retainedByteCountBucket, 'one_to_1024');
+  assert.equal(first.observation.stderrObservation.truncated, false);
+  const serialized = JSON.stringify(first);
+  for (const forbidden of ['Conversion failed!', 'stderrBytes', 'boundedStderr', 'C:\\Users', 'PATH', 'attemptId'])
+    assert.equal(serialized.includes(forbidden), false);
+  assert.deepEqual(Object.keys(first.observation).sort(), ['causeFamily', 'diagnosticSignal', 'markerHits',
+    'observationFingerprint', 'processFailureSubcategory', 'publicFailureCode', 'schemaVersion', 'stderrObservation'].sort());
+  fails(() => exerciseClosedProcessFailureObservationForTestOnly(Buffer.from('Conversion failed!')), 'process_failed');
+  assert.equal(exerciseClosedProcessFailureObservationForTestOnly.length, 1);
+});
+
+test('closed process-failure evidence freezes every byte bucket boundary and closed content bucket', () => {
+  const total = [['total_0', 'zero'], ['total_1', 'one_to_1024'], ['total_1024', 'one_to_1024'],
+    ['total_1025', '1025_to_8192'], ['total_8192', '1025_to_8192'], ['total_8193', '8193_to_65536'],
+    ['total_65536', '8193_to_65536'], ['total_65537', 'over_65536'], ['total_large_safe', 'over_65536']];
+  for (const [scenario, expected] of total)
+    assert.equal(exerciseClosedObservationMatrixForTestOnly(scenario).stderrObservation.totalByteCountBucket, expected);
+  const retained = [['retained_0', 'zero'], ['retained_1', 'one_to_1024'], ['retained_1024', 'one_to_1024'],
+    ['retained_1025', '1025_to_8192'], ['retained_8192', '1025_to_8192'], ['retained_8193', '8193_to_65535'],
+    ['retained_65535', '8193_to_65535'], ['retained_65536', '65536']];
+  for (const [scenario, expected] of retained)
+    assert.equal(exerciseClosedObservationMatrixForTestOnly(scenario).stderrObservation.retainedByteCountBucket, expected);
+  assert.equal(exerciseClosedObservationMatrixForTestOnly('total_65536').stderrObservation.truncated, false);
+  assert.equal(exerciseClosedObservationMatrixForTestOnly('total_65537').stderrObservation.truncated, true);
+  assert.equal(exerciseClosedObservationMatrixForTestOnly('retained_65536').stderrObservation.truncated, false);
+  for (const [scenario, expected] of [['lines_1', 'one'], ['lines_2', 'two_to_four'], ['lines_5', 'five_to_sixteen'], ['lines_17', 'more_than_sixteen']])
+    assert.equal(exerciseClosedObservationMatrixForTestOnly(scenario).stderrObservation.lineCountBucket, expected);
+  assert.equal(exerciseClosedObservationMatrixForTestOnly('ascii_none').stderrObservation.asciiByteBucket, 'none');
+  assert.equal(exerciseClosedObservationMatrixForTestOnly('ascii_low').stderrObservation.asciiByteBucket, 'low');
+  assert.equal(exerciseClosedObservationMatrixForTestOnly('ascii_medium').stderrObservation.asciiByteBucket, 'medium');
+  assert.equal(exerciseClosedObservationMatrixForTestOnly('ascii_high').stderrObservation.asciiByteBucket, 'high');
+  assert.equal(exerciseClosedObservationMatrixForTestOnly('non_ascii').stderrObservation.nonAsciiByteBucket, 'present');
+  assert.equal(exerciseClosedObservationMatrixForTestOnly('control').stderrObservation.controlByteBucket, 'present');
+  fails(() => exerciseClosedObservationMatrixForTestOnly(65536), 'process_failed');
+});
+
+test('closed marker hits are complete, deduplicated, canonical, and occurrence-order independent', () => {
+  const expected = ['resource_memory', 'resource_space', 'resource_files', 'option_unrecognized', 'option_missing',
+    'drawtext_initialize', 'font_load', 'font_missing', 'input_open', 'input_invalid_data', 'filter_complex_initialize',
+    'filter_missing', 'encoder_open', 'encoder_unknown', 'output_open', 'output_header', 'openh264_create',
+    'openh264_initialize', 'openh264_encode', 'openh264_max_nal', 'decoder_open_colon', 'decoder_open',
+    'filter_configure_graph', 'filter_configure_pad', 'filter_initialize', 'filter_reinitialize'];
+  const forward = exerciseClosedObservationMatrixForTestOnly('all_markers_forward');
+  const reverseDuplicate = exerciseClosedObservationMatrixForTestOnly('all_markers_reverse_duplicate');
+  assert.deepEqual(forward.markerHits, expected); assert.deepEqual(reverseDuplicate.markerHits, expected);
+  assert.equal(new Set(reverseDuplicate.markerHits).size, expected.length);
+  assert.deepEqual(exerciseClosedObservationMatrixForTestOnly('unknown_marker').markerHits, []);
+  assert.equal(forward.causeFamily, 'resource_or_io');
+  assert.equal(forward.diagnosticSignal, 'openh264_create_encoder_failed');
+});
+
+test('observation fingerprint depends only on canonical closed observation fields', () => {
+  const sameA = exerciseClosedObservationMatrixForTestOnly('raw_same_a');
+  const sameB = exerciseClosedObservationMatrixForTestOnly('raw_same_b');
+  assert.equal(sameA.observationFingerprint, sameB.observationFingerprint);
+  const scenarios = ['total_0', 'total_1025', 'retained_65536', 'lines_5', 'non_ascii', 'control',
+    'all_markers_forward', 'unknown_marker'];
+  const fingerprints = scenarios.map(scenario => exerciseClosedObservationMatrixForTestOnly(scenario).observationFingerprint);
+  assert.equal(new Set(fingerprints).size, fingerprints.length);
+  for (const value of fingerprints) assert.match(value, /^[a-f0-9]{64}$/u);
+});
+
+test('failure-evidence fingerprints separate closed observation identity from exact attempt identity', () => {
+  const first = trustedLocalRuntimeModule.exerciseFailureEvidenceFingerprintsForTestOnly('first_attempt');
+  const second = trustedLocalRuntimeModule.exerciseFailureEvidenceFingerprintsForTestOnly('second_attempt');
+  const changed = trustedLocalRuntimeModule.exerciseFailureEvidenceFingerprintsForTestOnly('different_observation');
+  assert.match(first.attemptId, /^[a-f0-9]{32}$/u); assert.equal(first.attemptId.length, 32);
+  assert.equal(first.observationFingerprint, second.observationFingerprint);
+  assert.notEqual(first.evidenceFingerprint, second.evidenceFingerprint);
+  assert.notEqual(first.observationFingerprint, changed.observationFingerprint);
+  assert.notEqual(first.evidenceFingerprint, changed.evidenceFingerprint);
+  for (const scenario of ['different_package', 'different_revision', 'different_canonical', 'different_manifest', 'different_environment']) {
+    const identityChanged = trustedLocalRuntimeModule.exerciseFailureEvidenceFingerprintsForTestOnly(scenario);
+    assert.equal(identityChanged.observationFingerprint, first.observationFingerprint);
+    assert.notEqual(identityChanged.evidenceFingerprint, first.evidenceFingerprint);
+  }
+  for (const value of [first.observationFingerprint, first.evidenceFingerprint]) assert.match(value, /^[a-f0-9]{64}$/u);
+  fails(() => trustedLocalRuntimeModule.exerciseFailureEvidenceFingerprintsForTestOnly({ attemptId: '1'.repeat(32) }), 'process_failed');
+  assert.equal(trustedLocalRuntimeModule.exerciseFailureEvidenceFingerprintsForTestOnly.length, 1);
+});
+
+test('failure-evidence authority is exact-object, exact-attempt, one-use, and cross-runtime closed', () => {
+  assert.deepEqual(trustedLocalRuntimeModule.exerciseFailureEvidenceAuthorityForTestOnly('valid'),
+    { accepted: true, subsequentExactPairAccepted: false });
+  for (const scenario of ['forged_attempt', 'forged_failure', 'copied_failure', 'json_failure', 'prototype_failure',
+    'cross_attempt', 'cross_runtime'])
+    assert.deepEqual(trustedLocalRuntimeModule.exerciseFailureEvidenceAuthorityForTestOnly(scenario),
+      { accepted: false, subsequentExactPairAccepted: true });
+  for (const scenario of ['already_consumed_attempt', 'already_consumed_failure'])
+    assert.deepEqual(trustedLocalRuntimeModule.exerciseFailureEvidenceAuthorityForTestOnly(scenario),
+      { accepted: false, subsequentExactPairAccepted: false });
+  fails(() => trustedLocalRuntimeModule.exerciseFailureEvidenceAuthorityForTestOnly({}), 'process_failed');
+});
+
+test('process-failure evidence persistence is bounded, canonical, and no-clobber', async () => {
+  for (const scenario of ['retained', 'no_clobber']) {
+    const result = await trustedLocalRuntimeModule.exerciseFailureEvidencePersistenceForTestOnly(scenario);
+    assert.deepEqual(result, { outcome: scenario, accepted: true, utf8NoBom: true, oneTrailingLf: true, byteLengthBounded: true });
+  }
+  assert.deepEqual(await trustedLocalRuntimeModule.exerciseFailureEvidencePersistenceForTestOnly('existing_evidence_file'),
+    { outcome: 'existing_evidence_file', accepted: true, existingBytesPreserved: true,
+      utf8NoBom: true, oneTrailingLf: true, byteLengthBounded: true });
+  for (const scenario of ['oversized', 'containment_escape', 'symlink_root', 'hardlink_anomaly']) {
+    const result = await trustedLocalRuntimeModule.exerciseFailureEvidencePersistenceForTestOnly(scenario);
+    assert.equal(result.outcome, scenario); assert.equal(result.accepted, false);
+  }
+  await assert.rejects(() => trustedLocalRuntimeModule.exerciseFailureEvidencePersistenceForTestOnly('hostile'),
+    (error) => error instanceof RenderingPhaseTwoFailure && error.code === 'process_failed');
+  assert.equal(trustedLocalRuntimeModule.exerciseFailureEvidencePersistenceForTestOnly.length, 1);
+});
+
+test('process-failure evidence attempt precedes process and persistence precedes production cleanup', async () => {
+  for (const [scenario, persistenceEvent] of [['retained', 'evidence_persist'], ['persistence_failure', 'persistence_unavailable']]) {
+    const result = await fixtureModule.exerciseProcessFailureEvidenceLifecycleForTestOnly(scenario);
+    assert.deepEqual(result.events, ['trusted_runtime_attempt', 'resolved_execution_binding', 'process', 'exact_failure_binding',
+      'evidence_finalize', persistenceEvent, 'cleanup', 'release', 'original_failure']);
+    assert.equal(result.originalFailureCode, 'process_failed'); assert.equal(result.persistenceAttempts, 1);
+    assert.equal(result.cleanupCount, 1); assert.equal(result.releaseCount, 1);
+  }
+  await assert.rejects(() => fixtureModule.exerciseProcessFailureEvidenceLifecycleForTestOnly('hostile'),
+    (error) => error instanceof RenderingPhaseTwoFailure && error.code === 'local_validation');
+  assert.equal(fixtureModule.exerciseProcessFailureEvidenceLifecycleForTestOnly.length, 1);
+  const successful = await fixtureModule.exerciseProcessFailureEvidenceSuccessForTestOnly();
+  assert.deepEqual(successful, { events: ['process_success', 'cleanup', 'release'], persistenceAttempts: 0, cleanupCount: 1, releaseCount: 1 });
+  assert.equal(fixtureModule.exerciseProcessFailureEvidenceSuccessForTestOnly.length, 0);
+});
+
+test('failure-evidence production destination is zero-input and cannot be redirected by process state', async () => {
+  assert.equal(trustedLocalRuntimeModule.persistProcessFailureEvidenceInternal.length, 3);
+  assert.equal(trustedLocalRuntimeModule.createProcessFailureEvidenceAttemptInternal.length, 2);
+  assert.equal(trustedLocalRuntimeModule.bindFailureEvidenceAttemptToResolvedExecutionInternal.length, 3);
+  assert.deepEqual(await trustedLocalRuntimeModule.exerciseFailureEvidenceRootIsolationForTestOnly(),
+    { cwd: true, home: true, path: true, argv: true, environment: true });
 });
 
 async function orchestrationHarness(overrides = {}) {

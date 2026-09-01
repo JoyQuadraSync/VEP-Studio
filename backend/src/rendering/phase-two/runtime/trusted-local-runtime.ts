@@ -1,8 +1,8 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { createReadStream, lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { Readable } from 'node:stream';
-import { lstat, readFile, realpath } from 'node:fs/promises';
+import { link, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { statfsSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -20,6 +20,44 @@ const verifiedEnvironments = new WeakMap<object, VerifiedToolchain>();
 const trustedResolved = new WeakMap<object, object>();
 type ArtifactObserver = (filePath: string, expected: string) => Promise<string>;
 const finalConsumptionTestObservers = new WeakMap<object, ArtifactObserver>();
+interface FailureEvidenceIdentities { readonly packageId: string; readonly packageRevisionHash: string;
+  readonly canonicalRenderIdentity: string; readonly commandManifestSha256: string; readonly referenceEnvironmentId: string }
+interface FailureEvidenceAttemptRecord extends FailureEvidenceIdentities { readonly attemptId: string; readonly composition: object }
+const failureEvidenceAttempts = new WeakMap<object, FailureEvidenceAttemptRecord>();
+const consumedFailureEvidenceAttempts = new WeakSet<object>();
+const resolvedFailureEvidenceAttempts = new WeakMap<object, object>();
+const processFailureEvidenceAttempts = new WeakMap<object, object>();
+const syntheticLifecycleDiagnostics = new WeakMap<object, Readonly<{ events: readonly string[]; persistence: 'retained' | 'unavailable' }>>();
+function buildProcessFailureEvidence(record: FailureEvidenceAttemptRecord, observation: Record<string, unknown>): Readonly<Record<string, unknown>> {
+  const base = { schemaVersion: 1, attemptId: record.attemptId, packageId: record.packageId,
+    packageRevisionHash: record.packageRevisionHash, canonicalRenderIdentity: record.canonicalRenderIdentity,
+    commandManifestSha256: record.commandManifestSha256, referenceEnvironmentId: record.referenceEnvironmentId,
+    executionTrust: 'trusted_local_reference', productionEligibility: 'prohibited', ...observation,
+    renderingCompleted: false, publishingPerformed: false };
+  return Object.freeze({ ...base, evidenceFingerprint: createHash('sha256').update(JSON.stringify(base)).digest('hex') });
+}
+async function persistClosedEvidence(root: string, attemptId: string, evidence: Buffer): Promise<boolean> {
+  if (!/^[a-f0-9]{32}$/u.test(attemptId) || evidence.length > 16 * 1024) return false;
+  const parent = path.dirname(root); await mkdir(parent, { recursive: true });
+  if (path.resolve(await realpath(parent)) !== path.resolve(parent)) return false;
+  try { await mkdir(root); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+  const rootInfo = await lstat(root); if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink() || path.resolve(await realpath(root)) !== path.resolve(root)) return false;
+  const attemptDir = path.join(root, attemptId); await mkdir(attemptDir);
+  try {
+    const attemptInfo = await lstat(attemptDir); if (!attemptInfo.isDirectory() || attemptInfo.isSymbolicLink() ||
+      path.resolve(await realpath(attemptDir)) !== path.resolve(attemptDir)) throw new Error();
+    return await writeEvidenceFileNoClobber(attemptDir, evidence);
+  } catch (error) { await rm(attemptDir, { recursive: true, force: true }).catch(() => undefined); throw error; }
+}
+async function writeEvidenceFileNoClobber(attemptDir: string, evidence: Buffer): Promise<boolean> {
+  const evidencePath = path.join(attemptDir, 'failure-v1.json'); await writeFile(evidencePath, evidence, { flag: 'wx', mode: 0o400 });
+  if (!await validatePersistedEvidenceFile(evidencePath, evidence)) throw new Error(); return true;
+}
+async function validatePersistedEvidenceFile(evidencePath: string, evidence: Buffer): Promise<boolean> {
+  const info = await lstat(evidencePath); if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || info.size !== evidence.length ||
+    path.resolve(await realpath(evidencePath)) !== path.resolve(evidencePath)) return false;
+  return (await readFile(evidencePath)).equals(evidence);
+}
 
 export function isTrustedLocalCapability(value: unknown): boolean { return typeof value === 'object' && value !== null && lineages.has(value); }
 export function trustedLocalVerifiedEnvironment(value: unknown): VerifiedToolchain | undefined {
@@ -59,6 +97,208 @@ export async function revalidateTrustedExecutionForConsumption(value: unknown): 
   const observeArtifact = finalConsumptionTestObservers.get(value as object) ?? observe;
   try { await observeArtifact(PATHS.ffmpeg, HASHES.ffmpeg); } catch { throw new RenderingPhaseTwoFailure('process_failed'); }
   try { await observeArtifact(PATHS.font, HASHES.font); } catch { throw new RenderingPhaseTwoFailure('font_invalid'); }
+}
+export function createProcessFailureEvidenceAttemptInternal(composition: unknown, identities: unknown): object | undefined {
+  if (typeof composition !== 'object' || composition === null || !lineages.has(composition) ||
+      typeof identities !== 'object' || identities === null) return undefined;
+  const value = identities as Partial<FailureEvidenceIdentities>;
+  if (![value.packageId, value.packageRevisionHash, value.canonicalRenderIdentity, value.commandManifestSha256,
+    value.referenceEnvironmentId].every((item) => typeof item === 'string' && /^[a-f0-9]{64}$/u.test(item))) return undefined;
+  const capability = Object.freeze({}); failureEvidenceAttempts.set(capability, Object.freeze({ attemptId: randomBytes(16).toString('hex'),
+    composition, packageId: value.packageId!, packageRevisionHash: value.packageRevisionHash!, canonicalRenderIdentity: value.canonicalRenderIdentity!,
+    commandManifestSha256: value.commandManifestSha256!, referenceEnvironmentId: value.referenceEnvironmentId! })); return capability;
+}
+export function bindFailureEvidenceAttemptToResolvedExecutionInternal(composition: unknown, attempt: unknown, resolved: unknown): boolean {
+  if (typeof composition !== 'object' || composition === null || typeof attempt !== 'object' || attempt === null ||
+      typeof resolved !== 'object' || resolved === null || trustedResolved.get(resolved) !== lineages.get(composition)) return false;
+  const record = failureEvidenceAttempts.get(attempt); if (!record || record.composition !== composition || consumedFailureEvidenceAttempts.has(attempt)) return false;
+  if (resolvedFailureEvidenceAttempts.has(resolved)) return false; resolvedFailureEvidenceAttempts.set(resolved, attempt); return true;
+}
+export function bindProcessFailureToEvidenceAttemptInternal(resolved: unknown, failure: unknown): void {
+  if (typeof resolved !== 'object' || resolved === null || typeof failure !== 'object' || failure === null) return;
+  const attempt = resolvedFailureEvidenceAttempts.get(resolved); if (attempt && !processFailureEvidenceAttempts.has(failure))
+    processFailureEvidenceAttempts.set(failure, attempt);
+}
+function processFailureEvidenceRoot(): string { return path.join(ROOT, 'evidence', 'renders', 'process-failures'); }
+function consumeProcessFailureEvidencePair(composition: object, attempt: object, failure: object): Readonly<{
+  record: FailureEvidenceAttemptRecord; observation: Record<string, unknown> }> | undefined {
+  const record = failureEvidenceAttempts.get(attempt); if (!record || consumedFailureEvidenceAttempts.has(attempt) ||
+    record.composition !== composition || processFailureEvidenceAttempts.get(failure) !== attempt) return undefined;
+  const runner = require('../process/ffmpeg-process-runner') as { hasClosedProcessFailureObservationInternal(value: unknown): boolean;
+    consumeClosedProcessFailureObservationInternal(value: unknown): unknown };
+  if (!runner.hasClosedProcessFailureObservationInternal(failure)) return undefined;
+  const observation = runner.consumeClosedProcessFailureObservationInternal(failure) as Record<string, unknown> | undefined;
+  if (!observation) return undefined; consumedFailureEvidenceAttempts.add(attempt); return Object.freeze({ record, observation });
+}
+export async function persistProcessFailureEvidenceInternal(composition: unknown, attempt: unknown, failure: unknown): Promise<'retained' | 'unavailable'> {
+  if (typeof composition !== 'object' || composition === null || typeof attempt !== 'object' || attempt === null ||
+      typeof failure !== 'object' || failure === null || !lineages.has(composition)) return 'unavailable';
+  try {
+    const pair = consumeProcessFailureEvidencePair(composition, attempt, failure); if (!pair) return 'unavailable';
+    const finalized = buildProcessFailureEvidence(pair.record, pair.observation);
+    const evidence = Buffer.from(`${JSON.stringify(finalized)}\n`, 'utf8');
+    return await persistClosedEvidence(processFailureEvidenceRoot(), pair.record.attemptId, evidence) ? 'retained' : 'unavailable';
+  } catch { return 'unavailable'; }
+}
+/** Closed exact-pair authority harness. It returns no capability, failure object, path, identity, or native data. */
+export function exerciseFailureEvidenceAuthorityForTestOnly(scenario: unknown): Readonly<{ accepted: boolean; subsequentExactPairAccepted: boolean }> {
+  if (!['valid', 'forged_attempt', 'forged_failure', 'copied_failure', 'json_failure', 'prototype_failure', 'cross_attempt',
+    'cross_runtime', 'already_consumed_attempt', 'already_consumed_failure'].includes(scenario as string))
+    throw new RenderingPhaseTwoFailure('process_failed');
+  const lineage = Object.freeze({}); const composition = Object.freeze({}); const otherComposition = Object.freeze({});
+  lineages.set(composition, lineage); lineages.set(otherComposition, Object.freeze({}));
+  const identities = { packageId: 'a'.repeat(64), packageRevisionHash: 'b'.repeat(64), canonicalRenderIdentity: 'c'.repeat(64),
+    commandManifestSha256: 'd'.repeat(64), referenceEnvironmentId: 'e'.repeat(64) };
+  const attempt = createProcessFailureEvidenceAttemptInternal(composition, identities)!;
+  const otherAttempt = createProcessFailureEvidenceAttemptInternal(composition, identities)!;
+  let failure: object;
+  try { const runner = require('../process/ffmpeg-process-runner') as { exerciseRegisteredNonzeroExitDiagnosticSignalForTestOnly(value: unknown): never };
+    runner.exerciseRegisteredNonzeroExitDiagnosticSignalForTestOnly('unknown_nonzero_exit_signal'); throw new Error(); }
+  catch (error) { if (typeof error !== 'object' || error === null) throw error; failure = error; }
+  processFailureEvidenceAttempts.set(failure, attempt);
+  let selectedComposition = composition; let selectedAttempt: object = attempt; let selectedFailure: object = failure;
+  if (scenario === 'forged_attempt') selectedAttempt = Object.freeze({});
+  if (scenario === 'forged_failure') selectedFailure = Object.freeze({ code: 'process_failed' });
+  if (scenario === 'copied_failure') selectedFailure = Object.freeze({ ...failure });
+  if (scenario === 'json_failure') selectedFailure = JSON.parse(JSON.stringify(failure)) as object;
+  if (scenario === 'prototype_failure') selectedFailure = Object.create(Object.getPrototypeOf(failure)) as object;
+  if (scenario === 'cross_attempt') selectedAttempt = otherAttempt;
+  if (scenario === 'cross_runtime') selectedComposition = otherComposition;
+  if (scenario === 'already_consumed_attempt') consumedFailureEvidenceAttempts.add(attempt);
+  if (scenario === 'already_consumed_failure') {
+    const runner = require('../process/ffmpeg-process-runner') as { consumeClosedProcessFailureObservationInternal(value: unknown): unknown };
+    if (!runner.consumeClosedProcessFailureObservationInternal(failure)) throw new RenderingPhaseTwoFailure('process_failed');
+  }
+  const first = consumeProcessFailureEvidencePair(selectedComposition, selectedAttempt, selectedFailure) !== undefined;
+  const second = consumeProcessFailureEvidencePair(composition, attempt, failure) !== undefined;
+  return Object.freeze({ accepted: first, subsequentExactPairAccepted: second });
+}
+/** Closed fingerprint harness. It accepts no identity, path, bytes, capability, or native data. */
+export function exerciseFailureEvidenceFingerprintsForTestOnly(scenario: unknown): Readonly<{
+  observationFingerprint: string; evidenceFingerprint: string; attemptId: string }> {
+  if (!['first_attempt', 'second_attempt', 'different_observation', 'different_package', 'different_revision', 'different_canonical',
+    'different_manifest', 'different_environment'].includes(scenario as string)) throw new RenderingPhaseTwoFailure('process_failed');
+  const attemptId = scenario === 'second_attempt' ? '2'.repeat(32) : '1'.repeat(32); const changed = scenario === 'different_observation';
+  const closed = { schemaVersion: 1, publicFailureCode: 'process_failed', processFailureSubcategory: 'nonzero_exit',
+    causeFamily: 'unknown_nonzero_exit', diagnosticSignal: 'unknown_nonzero_exit_signal', markerHits: [],
+    stderrObservation: { totalByteCountBucket: changed ? '1025_to_8192' : 'one_to_1024', retainedByteCountBucket: 'one_to_1024',
+      truncated: false, lineCountBucket: 'one', asciiByteBucket: 'low', nonAsciiByteBucket: 'none', controlByteBucket: 'none' } };
+  const observationFingerprint = createHash('sha256').update(JSON.stringify(closed)).digest('hex');
+  const observation = { ...closed, observationFingerprint }; const record = Object.freeze({ attemptId, composition: Object.freeze({}),
+    packageId: (scenario === 'different_package' ? 'f' : 'a').repeat(64),
+    packageRevisionHash: (scenario === 'different_revision' ? 'f' : 'b').repeat(64),
+    canonicalRenderIdentity: (scenario === 'different_canonical' ? 'f' : 'c').repeat(64),
+    commandManifestSha256: (scenario === 'different_manifest' ? 'f' : 'd').repeat(64),
+    referenceEnvironmentId: (scenario === 'different_environment' ? 'f' : 'e').repeat(64) });
+  const evidence = buildProcessFailureEvidence(record, observation);
+  return Object.freeze({ observationFingerprint, evidenceFingerprint: evidence.evidenceFingerprint as string, attemptId });
+}
+/** Closed persistence harness using only a self-owned temporary directory. */
+export async function exerciseFailureEvidencePersistenceForTestOnly(scenario: unknown): Promise<Readonly<{
+  outcome: 'retained' | 'no_clobber' | 'existing_evidence_file' | 'oversized' | 'containment_escape' | 'symlink_root' | 'hardlink_anomaly';
+  accepted: boolean; utf8NoBom: true; oneTrailingLf: true; byteLengthBounded: true; existingBytesPreserved?: true }>> {
+  if (!['retained', 'no_clobber', 'existing_evidence_file', 'oversized', 'containment_escape', 'symlink_root', 'hardlink_anomaly'].includes(scenario as string))
+    throw new RenderingPhaseTwoFailure('process_failed');
+  const parent = await mkdtemp(path.join(os.tmpdir(), 'vep-process-failure-evidence-')); const root = path.join(parent, 'process-failures');
+  const result = exerciseFailureEvidenceFingerprintsForTestOnly('first_attempt');
+  const bytes = Buffer.from(`${JSON.stringify({ schemaVersion: 1, ...result })}\n`, 'utf8');
+  try {
+    if (scenario === 'oversized') return Object.freeze({ outcome: scenario, accepted: await persistClosedEvidence(root, result.attemptId,
+      Buffer.alloc(16 * 1024 + 1)), utf8NoBom: true, oneTrailingLf: true, byteLengthBounded: true });
+    if (scenario === 'containment_escape') return Object.freeze({ outcome: scenario, accepted: await persistClosedEvidence(root, '../escape', bytes),
+      utf8NoBom: true, oneTrailingLf: true, byteLengthBounded: true });
+    if (scenario === 'symlink_root') { const target = path.join(parent, 'target'); await mkdir(target); await symlink(target, root, 'junction');
+      return Object.freeze({ outcome: scenario, accepted: await persistClosedEvidence(root, result.attemptId, bytes), utf8NoBom: true,
+        oneTrailingLf: true, byteLengthBounded: true }); }
+    if (scenario === 'hardlink_anomaly') { const first = path.join(parent, 'first'); const second = path.join(parent, 'second');
+      await writeFile(first, bytes); await link(first, second); return Object.freeze({ outcome: scenario,
+        accepted: await validatePersistedEvidenceFile(first, bytes), utf8NoBom: true, oneTrailingLf: true, byteLengthBounded: true }); }
+    if (scenario === 'existing_evidence_file') {
+      const attemptDir = path.join(root, result.attemptId); await mkdir(attemptDir, { recursive: true });
+      const evidencePath = path.join(attemptDir, 'failure-v1.json'); const existingBytes = Buffer.from('existing-synthetic-evidence', 'ascii');
+      await writeFile(evidencePath, existingBytes, { flag: 'wx' });
+      let rejected = false; try { await writeEvidenceFileNoClobber(attemptDir, bytes); } catch { rejected = true; }
+      const existingBytesPreserved = (await readFile(evidencePath)).equals(existingBytes);
+      if (!existingBytesPreserved) throw new Error();
+      return Object.freeze({ outcome: scenario, accepted: rejected, existingBytesPreserved: true as const,
+        utf8NoBom: true, oneTrailingLf: true, byteLengthBounded: true });
+    }
+    if (!await persistClosedEvidence(root, result.attemptId, bytes)) throw new Error();
+    if (scenario === 'no_clobber') {
+      let rejected = false;
+      try { await persistClosedEvidence(root, result.attemptId, bytes); } catch { rejected = true; }
+      if (!rejected) throw new Error();
+    }
+    const retained = await readFile(path.join(root, result.attemptId, 'failure-v1.json'));
+    return Object.freeze({ outcome: scenario, accepted: true, utf8NoBom: !retained.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf])),
+      oneTrailingLf: retained.at(-1) === 0x0a && retained.at(-2) !== 0x0a, byteLengthBounded: retained.length <= 16 * 1024 }) as Readonly<{
+        outcome: 'retained' | 'no_clobber'; accepted: boolean; utf8NoBom: true; oneTrailingLf: true; byteLengthBounded: true }>;
+  } finally { await rm(parent, { recursive: true, force: true }); }
+}
+/** Closed behavioral root harness. It reveals no path and cannot select production authority. */
+export async function exerciseFailureEvidenceRootIsolationForTestOnly(): Promise<Readonly<{
+  cwd: true; home: true; path: true; argv: true; environment: true }>> {
+  const originalCwd = process.cwd(); const originalArgv = [...process.argv]; const originalHome = process.env.HOME;
+  const originalPath = process.env.PATH; const originalHostile = process.env.VEP_EVIDENCE_ROOT;
+  const temporaryCwd = await mkdtemp(path.join(os.tmpdir(), 'vep-evidence-root-isolation-'));
+  const observeIndependently = (mutate: () => void, restore: () => void): boolean => {
+    const baseline = processFailureEvidenceRoot();
+    try { mutate(); return processFailureEvidenceRoot() === baseline; } finally { restore(); }
+  };
+  try {
+    const cwd = observeIndependently(() => process.chdir(temporaryCwd), () => process.chdir(originalCwd));
+    const home = observeIndependently(() => { process.env.HOME = 'C:\\redirected-home'; }, () => {
+      if (originalHome === undefined) delete process.env.HOME; else process.env.HOME = originalHome;
+    });
+    const pathUnchanged = observeIndependently(() => { process.env.PATH = 'C:\\redirected-path'; }, () => {
+      if (originalPath === undefined) delete process.env.PATH; else process.env.PATH = originalPath;
+    });
+    const argv = observeIndependently(() => process.argv.splice(0, process.argv.length, 'node', '--evidence-root=C:\\redirected-argv'),
+      () => process.argv.splice(0, process.argv.length, ...originalArgv));
+    const environment = observeIndependently(() => { process.env.VEP_EVIDENCE_ROOT = 'C:\\redirected-evidence'; }, () => {
+      if (originalHostile === undefined) delete process.env.VEP_EVIDENCE_ROOT; else process.env.VEP_EVIDENCE_ROOT = originalHostile;
+    });
+    if (!cwd || !home || !pathUnchanged || !argv || !environment) throw new RenderingPhaseTwoFailure('process_failed');
+    return Object.freeze({ cwd: true as const, home: true as const, path: true as const, argv: true as const, environment: true as const });
+  } finally {
+    process.chdir(originalCwd); process.argv.splice(0, process.argv.length, ...originalArgv);
+    if (originalHome === undefined) delete process.env.HOME; else process.env.HOME = originalHome;
+    if (originalPath === undefined) delete process.env.PATH; else process.env.PATH = originalPath;
+    if (originalHostile === undefined) delete process.env.VEP_EVIDENCE_ROOT; else process.env.VEP_EVIDENCE_ROOT = originalHostile;
+    await rm(temporaryCwd, { recursive: true, force: true });
+  }
+}
+/** Closed synthetic authority-chain harness. It throws the exact registered failure and writes only beneath a temporary root. */
+export async function throwSyntheticFailureEvidenceLifecycleForTestOnly(scenario: unknown): Promise<never> {
+  if (scenario !== 'retained' && scenario !== 'persistence_failure') throw new RenderingPhaseTwoFailure('process_failed');
+  const events: string[] = []; const lineage = Object.freeze({}); const composition = Object.freeze({}); lineages.set(composition, lineage);
+  const identities = { packageId: 'a'.repeat(64), packageRevisionHash: 'b'.repeat(64), canonicalRenderIdentity: 'c'.repeat(64),
+    commandManifestSha256: 'd'.repeat(64), referenceEnvironmentId: 'e'.repeat(64) };
+  const attempt = createProcessFailureEvidenceAttemptInternal(composition, identities); if (!attempt) throw new RenderingPhaseTwoFailure('process_failed');
+  events.push('trusted_runtime_attempt'); const resolved = Object.freeze({}); trustedResolved.set(resolved, lineage);
+  if (!bindFailureEvidenceAttemptToResolvedExecutionInternal(composition, attempt, resolved)) throw new RenderingPhaseTwoFailure('process_failed');
+  events.push('resolved_execution_binding', 'process');
+  let failure: object;
+  try {
+    const runner = require('../process/ffmpeg-process-runner') as { exerciseRegisteredNonzeroExitDiagnosticSignalForTestOnly(value: unknown): never };
+    runner.exerciseRegisteredNonzeroExitDiagnosticSignalForTestOnly('unknown_nonzero_exit_signal'); throw new Error();
+  } catch (error) { if (typeof error !== 'object' || error === null) throw error; failure = error; }
+  bindProcessFailureToEvidenceAttemptInternal(resolved, failure); events.push('exact_failure_binding', 'evidence_finalize');
+  const pair = consumeProcessFailureEvidencePair(composition, attempt, failure); if (!pair) throw new RenderingPhaseTwoFailure('process_failed');
+  const evidence = Buffer.from(`${JSON.stringify(buildProcessFailureEvidence(pair.record, pair.observation))}\n`, 'utf8');
+  const parent = await mkdtemp(path.join(os.tmpdir(), 'vep-process-failure-lifecycle-')); const root = path.join(parent, 'process-failures');
+  let persistence: 'retained' | 'unavailable' = 'unavailable';
+  try {
+    if (scenario === 'persistence_failure') await mkdir(path.join(root, pair.record.attemptId), { recursive: true });
+    try { persistence = await persistClosedEvidence(root, pair.record.attemptId, evidence) ? 'retained' : 'unavailable'; } catch { persistence = 'unavailable'; }
+  } finally { await rm(parent, { recursive: true, force: true }); }
+  events.push(persistence === 'retained' ? 'evidence_persist' : 'persistence_unavailable');
+  syntheticLifecycleDiagnostics.set(failure, Object.freeze({ events: Object.freeze(events), persistence })); throw failure;
+}
+/** Exact-object read-only lifecycle diagnosis; it returns no authority or native data. */
+export function diagnoseSyntheticFailureEvidenceLifecycleForTestOnly(failure: unknown): Readonly<{
+  events: readonly string[]; persistence: 'retained' | 'unavailable' }> | undefined {
+  return typeof failure === 'object' && failure !== null ? syntheticLifecycleDiagnostics.get(failure) : undefined;
 }
 /** Closed, side-effect-free ordering harness. It returns no authority, path, hash, callback, or trusted object. */
 export async function exerciseFinalConsumptionBoundaryForTestOnly(scenario: unknown): Promise<Readonly<{

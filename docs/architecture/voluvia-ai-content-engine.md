@@ -68,10 +68,22 @@ Brand-safety rules prohibit unsupported medical, clinical, commercial, urgency, 
 
 Successful technical execution produces `pending_manual_review`; it does not constitute publication approval. Human review is currently an external manual responsibility. It is not yet implemented as a workflow Human Task.
 
+### Trusted-local process-failure evidence
+
+M4B Process-Failure Evidence Seam V1 retains only closed-derived diagnostic fields for trusted-local controlled-render process failures. Raw and redacted stderr persistence are prohibited. Private stderr retention is bounded to 65,536 bytes, while durable size information is coarsened; exactly 65,536 observed bytes means `truncated: false`, and 65,537 means `truncated: true`. Closed marker identities are ordered and deduplicated.
+
+The trusted-local runtime owns an opaque, one-use attempt capability. Its `attemptId` is generated internally from exactly 16 cryptographically random bytes and encoded as 32 lowercase hexadecimal characters; the identifier alone is not trust authority. Authority remains bound to the exact runtime, trusted composition, resolved execution, and process-failure lineage. Exact-pair validation occurs before consumption, and a failure cannot mint a replacement attempt.
+
+`observationFingerprint` identifies the canonical closed diagnostic observation independently of attempt identity. `evidenceFingerprint` identifies the complete attempt-specific evidence identity, including its render, manifest, environment, trust, eligibility, and observation bindings. Neither fingerprint hashes raw or redacted stderr.
+
+The production evidence destination is internally resolved through a zero-input boundary. Callers, cwd, `HOME`, `PATH`, argv, and environment state cannot select or redirect it. Persistence is no-clobber and preserves existing evidence bytes. Evidence finalization and persistence are attempted before workspace cleanup and render-slot release. A persistence failure preserves the original rendering failure, does not claim retention, and does not trigger retry, repair, fallback, or publishing.
+
+This boundary retains `executionTrust: trusted_local_reference` and `productionEligibility: prohibited`.
+
 ## Runtime Boundary
 
 WorkflowRunner continues to own workflow control flow. The AI adapter, Prompt Catalog, compatibility policy, and validators do not alter EventBus, ExecutionContext, persistence, or workflow-runtime contracts.
 
 ## Current Limits
 
-The architecture currently has no TikTok data connector, publishing path, automatic repair, provider retry, Human Task, or closed-loop performance optimization.
+The architecture currently has no TikTok data connector, publishing path, automatic repair, provider retry, Human Task, or closed-loop performance optimization. The sixth controlled render failed without retry at `process_failed` / `nonzero_exit` / `unknown_nonzero_exit` / `unknown_nonzero_exit_signal`. The FFmpeg failure remains unresolved, no deterministic MP4 has been verified, and a seventh controlled render has not been authorized or executed.
